@@ -1,0 +1,28 @@
+{
+  "name": "andromeda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous AI agent products on a shared, HITL-gated substrate.",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-test-module-mocks \"packages/**/test/*.test.ts\" \"apps/**/test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "console": "node apps/console/src/server.ts",
+    "autobuild": "node apps/console/src/cli.ts",
+    "check": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0"
+  }
+}
