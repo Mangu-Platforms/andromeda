@@ -38,7 +38,12 @@ export interface MergeRequest {
  */
 export interface MergeTarget {
   readonly name: string;
-  openBranch(input: { proposal: ChangeProposal; baseCommit: string }): Promise<BranchRef>;
+  openBranch(input: {
+    proposal: ChangeProposal;
+    /** Deterministic name from `branchNameFor`, so a replay reuses the branch. */
+    name: string;
+    baseCommit: string;
+  }): Promise<BranchRef>;
   merge(request: MergeRequest): Promise<MergeReceipt>;
   abandon(input: { branch: BranchRef; reason: string }): Promise<void>;
 }
@@ -56,10 +61,11 @@ export class RecordingMergeTarget implements MergeTarget {
 
   async openBranch(input: {
     proposal: ChangeProposal;
+    name: string;
     baseCommit: string;
   }): Promise<BranchRef> {
     const branch: BranchRef = {
-      name: `guardian/${input.proposal.id}`,
+      name: input.name,
       baseCommit: input.baseCommit,
       url: `(local)/${input.proposal.id}`,
     };
