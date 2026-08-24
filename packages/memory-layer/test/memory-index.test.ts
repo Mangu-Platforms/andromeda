@@ -106,7 +106,13 @@ test("a hard delete leaves no retrievable residue", () => {
   assert.equal(index.forget("mem_u1"), false, "a second delete is a no-op, not an error");
 
   assert.equal(index.get("mem_u1", NOW), null);
-  assert.deepEqual(index.search("passphrase orange", { now: NOW }).map((r) => r.entryId), ["mem_u2"]);
+  // The deleted line is unreachable by its own words...
+  assert.deepEqual(index.search("passphrase orange", { now: NOW }), []);
+  // ...and the neighbour is still reachable by its own. This previously
+  // asserted that "passphrase orange" returned mem_u2, which shares no tokens
+  // with "remember to buy marmalade" — it matched on recency alone, which is
+  // the behaviour MIN_TOPICAL_SIGNAL now refuses.
+  assert.deepEqual(index.search("marmalade", { now: NOW }).map((r) => r.entryId), ["mem_u2"]);
   assert.equal(index.cloudRecords(NOW).some((r) => r.entryId === "mem_u1"), false);
 
   // Nothing derived from the deleted line survives anywhere in the index: not
