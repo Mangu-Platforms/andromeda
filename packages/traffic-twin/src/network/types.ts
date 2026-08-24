@@ -99,3 +99,18 @@ export function greenPerCycle(plan: SignalPlan, movementId: string): number {
 export function phaseSum(plan: SignalPlan): number {
   return plan.phases.reduce((sum, p) => sum + p.greenS + p.yellowS + p.allRedS, 0);
 }
+
+/**
+ * Vehicle demand at one intersection, in vehicles per hour per movement.
+ *
+ * Lives with the network rather than with a simulator: demand is an observed
+ * property of the site, and any evaluator — the queue model here, or a real
+ * microsimulation later — consumes the same profile.
+ */
+export interface DemandProfile {
+  intersectionId: string;
+  /** Human-readable period, e.g. "weekday AM peak". */
+  label: string;
+  /** Movement id -> vehicles per hour. */
+  vph: Record<string, number>;
+}

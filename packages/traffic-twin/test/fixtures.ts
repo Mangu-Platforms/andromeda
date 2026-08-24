@@ -7,8 +7,11 @@
  * calibrated site.
  */
 
-import type { DemandProfile } from "../src/sim/mesoscopic.ts";
-import type { Intersection, SignalPlan } from "../src/network/types.ts";
+import type {
+  DemandProfile,
+  Intersection,
+  SignalPlan,
+} from "../src/network/types.ts";
 
 export function sampleIntersection(): Intersection {
   const veh = (

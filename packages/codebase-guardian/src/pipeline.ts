@@ -206,7 +206,9 @@ export function createCodebaseGuardian(
         }),
       );
 
-      const ci = await ctx.step("run-ci", async () => deps.ci.run({ branch, proposal }));
+      const ci = await ctx.step("run-ci", async () =>
+        deps.ci.run({ branch: branch.name, proposal }),
+      );
 
       const review: ReviewPacket = await ctx.step(REVIEW_STEP, async () => {
         const bumpClass =
