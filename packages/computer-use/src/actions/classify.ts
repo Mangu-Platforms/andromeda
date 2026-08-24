@@ -1,3 +1,4 @@
+import { hasControlChars } from "../text.ts";
 import {
   ACTION_KINDS,
   isReadOnlyKind,
@@ -39,10 +40,6 @@ const LIMITS = {
   rationale: 400,
 } as const;
 
-// Newlines included: an action field is a value, never a place to forge extra
-// structure in a prompt, a log line or a rendered review page. C0 and C1
-// controls, DEL, and the Unicode line/paragraph separators all count.
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 const FIELDS = ["kind", "elementId", "url", "value", "rationale"] as const;
 
@@ -81,7 +78,7 @@ export function parseProposedAction(raw: unknown, options: ParseActionOptions): 
       add(`action.${name}: is ${value.length} characters, limit is ${max}`);
       return null;
     }
-    if (CONTROL_CHARS.test(value)) {
+    if (hasControlChars(value)) {
       add(`action.${name}: contains control characters`);
       return null;
     }
