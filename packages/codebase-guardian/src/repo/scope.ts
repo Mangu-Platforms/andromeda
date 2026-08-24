@@ -236,14 +236,25 @@ export function renderScope(index: RepoIndex, scope: ScopedContext): string {
   }
   lines.push("");
 
+  const admitted = new Set(scope.files.map((f) => f.path));
   for (const scoped of scope.files) {
     const file = index.file(scoped.path);
     if (file === null) continue;
     lines.push(`## ${file.path}  (${scoped.reason}, depth ${scoped.depth})`);
     lines.push(`exports: ${file.exports.length > 0 ? file.exports.join(", ") : "(none)"}`);
     lines.push(`imports: ${file.imports.length > 0 ? file.imports.join(", ") : "(none)"}`);
+    // Only importers that are themselves in the scope are named. Listing every
+    // importer would reintroduce exactly the unbounded growth this module
+    // exists to prevent: a hub file in a large repository has thousands, and
+    // they would land in the prompt however few files were admitted. The count
+    // of the rest is still reported, because "this file is widely used" is
+    // information the reviewer and the model both need.
+    const importers = index.importersOf(file.path);
+    const inScope = importers.filter((path) => admitted.has(path));
+    const outside = importers.length - inScope.length;
     lines.push(
-      `imported by: ${index.importersOf(file.path).join(", ") || "(nothing in this scope)"}`,
+      `imported by: ${inScope.join(", ") || "(nothing in this scope)"}` +
+        (outside > 0 ? ` (+${outside} more outside this scope)` : ""),
     );
     if (file.source !== null) {
       lines.push("```");
