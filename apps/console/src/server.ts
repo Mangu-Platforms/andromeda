@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { Router } from "@andromeda/core";
-import { createConsoleApp, providerFromEnv } from "./app.ts";
+import { createConsoleApp, providerFromEnv, storeFromEnv } from "./app.ts";
 import { createRouter } from "./api.ts";
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -57,12 +57,13 @@ async function toWebRequest(req: IncomingMessage): Promise<Request> {
 
 export async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 4200);
-  const llm = await providerFromEnv();
+  const [llm, store] = await Promise.all([providerFromEnv(), storeFromEnv()]);
   const app = await createConsoleApp({
     stateDir: process.env.ANDROMEDA_STATE_DIR ?? "./.andromeda/state",
     outputDir: process.env.ANDROMEDA_OUT_DIR ?? "./.andromeda/out",
     budgetUsd: Number(process.env.ANDROMEDA_BUDGET_USD ?? 5),
     ...(llm ? { llm } : {}),
+    ...(store ? { store } : {}),
   });
 
   createServer(nodeAdapter(createRouter(app))).listen(port, () => {

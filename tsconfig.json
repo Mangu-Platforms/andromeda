@@ -17,5 +17,5 @@
     "types": ["node"]
   },
   "include": ["packages/**/*.ts", "apps/**/*.ts"],
-  "exclude": ["node_modules", "**/node_modules", ".andromeda"]
+  "exclude": ["node_modules", "**/node_modules", ".andromeda", "apps/web/**"]
 }

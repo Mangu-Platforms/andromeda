@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "console": "node apps/console/src/server.ts",
     "autobuild": "node apps/console/src/cli.ts",
+    "web": "npm run dev --workspace apps/web",
     "check": "npm run typecheck && npm run test"
   },
   "devDependencies": {
