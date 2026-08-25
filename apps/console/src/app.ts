@@ -27,8 +27,10 @@ export interface ConsoleApp {
 }
 
 export interface ConsoleOptions {
-  /** Where run state lives. Omit for an in-memory store. */
+  /** Where run state lives. Omit for an in-memory store. Ignored if `store` is set. */
   stateDir?: string;
+  /** A store to use directly — takes priority over `stateDir`. See `storeFromEnv`. */
+  store?: Store;
   /** Where approved builds are written. */
   outputDir?: string;
   /** Per-run spend ceiling in USD. */
@@ -46,7 +48,7 @@ export interface ConsoleOptions {
 export async function createConsoleApp(options: ConsoleOptions = {}): Promise<ConsoleApp> {
   const demoMode = !options.llm;
   const llm = options.llm ?? demoProvider();
-  const store: Store = options.stateDir ? new FileStore(options.stateDir) : new MemoryStore();
+  const store: Store = options.store ?? (options.stateDir ? new FileStore(options.stateDir) : new MemoryStore());
   const gate = new ApprovalGate(store, systemClock, randomIds);
   const registry = new TemplateRegistry();
 
@@ -82,4 +84,16 @@ export async function providerFromEnv(): Promise<LLMProvider | null> {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) return null;
   const { AnthropicProvider } = await import("@andromeda/core/anthropic");
   return new AnthropicProvider();
+}
+
+/**
+ * Build a Supabase-backed store from the environment, or null to stay local
+ * (an in-memory or on-disk store — see `ConsoleOptions`).
+ *
+ * Imported dynamically for the same reason as `providerFromEnv`: a console
+ * with no Supabase project configured never touches this module.
+ */
+export async function storeFromEnv(): Promise<Store | null> {
+  const { supabaseStoreFromEnv } = await import("@andromeda/core/supabase-store");
+  return supabaseStoreFromEnv(process.env);
 }

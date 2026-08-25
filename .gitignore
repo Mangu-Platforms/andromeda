@@ -4,3 +4,6 @@ node_modules/
 .env
 .env.local
 .DS_Store
+.next/
+apps/web/next-env.d.ts
+.vercel
