@@ -8,5 +8,9 @@
     ".": "./src/server.ts",
     "./app": "./src/app.ts",
     "./api": "./src/api.ts"
+  },
+  "dependencies": {
+    "@andromeda/autobuilder": "*",
+    "@andromeda/core": "*"
   }
 }

@@ -22,8 +22,5 @@
   "devDependencies": {
     "@types/node": "22.10.5",
     "typescript": "5.9.3"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.120.0"
   }
 }
