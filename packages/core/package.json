@@ -8,5 +8,8 @@
     ".": "./src/index.ts",
     "./anthropic": "./src/llm/anthropic.ts",
     "./supabase-store": "./src/store/supabase.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0"
   }
 }
