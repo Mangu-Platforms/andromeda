@@ -40,7 +40,16 @@ export function createRouter(app: ConsoleApp, options: RouterOptions = {}): Rout
       : sameOriginPostGuard(),
   });
 
-  router.get("/", async () => html(dashboard(await app.runner.list(), app.demoMode)));
+  router.get("/", async () => {
+    const [runs, approvals] = await Promise.all([app.runner.list(), app.gate.list()]);
+    // Newest-first ordering means the first approval seen per run is the
+    // latest word on it, which is what the operator column should show.
+    const decisions = new Map<string, (typeof approvals)[number]>();
+    for (const approval of approvals) {
+      if (!decisions.has(approval.runId)) decisions.set(approval.runId, approval);
+    }
+    return html(dashboard(runs, app.demoMode, decisions));
+  });
 
   router.get("/runs/:id", async (_req, params) => {
     const view = await loadRun(app, params.id ?? "");

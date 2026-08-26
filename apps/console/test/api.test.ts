@@ -267,6 +267,35 @@ test("the templates endpoint reports what can actually be built", async () => {
   }
 });
 
+test("the dashboard accounts for who asked and who decided", async () => {
+  const { router } = await consoleUnderTest();
+  const started = await router.handle(
+    asJson("/runs", { intent: "a link shortener", requestedBy: "priya@mangu.dev" }),
+  );
+  const { id } = (await started.json()) as { id: string };
+  await router.handle(
+    asJson(`/runs/${id}/decision`, { status: "approved", decidedBy: "renee@mangu.dev", note: "" }),
+  );
+
+  const page = await (await router.handle(new Request("http://console/"))).text();
+  assert.match(page, /Requested by/);
+  assert.match(page, /priya@mangu\.dev/);
+  assert.match(page, /approved by renee@mangu\.dev/);
+});
+
+test("the run page accounts for spend by purpose and model", async () => {
+  const { router } = await consoleUnderTest();
+  const started = await router.handle(
+    asJson("/runs", { intent: "a link shortener", requestedBy: "priya@mangu.dev" }),
+  );
+  const { id } = (await started.json()) as { id: string };
+
+  const page = await (await router.handle(new Request(`http://console/runs/${id}`))).text();
+  assert.match(page, /Spend by purpose/);
+  // The demo fixtures meter real llm.call events for the compiler and features.
+  assert.match(page, /compile-spec|spec\.compile|feature/i);
+});
+
 test("the audit trail is exposed for the run", async () => {
   const { router } = await consoleUnderTest();
   const started = await router.handle(
