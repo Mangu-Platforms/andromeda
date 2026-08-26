@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 import { TemplateRegistry } from "../src/templates/registry.ts";
 import { topologicallySort } from "../src/templates/sql.ts";
@@ -179,6 +183,11 @@ test("node-service renders a runnable zero-dependency server", () => {
   const server = files.get("src/server.ts") ?? "";
   assert.match(server, /node:http/);
   assert.match(server, /\/health/);
+  // Identity is proxy-attested, never a bare client header.
+  assert.match(server, /PROXY_AUTH_SECRET/);
+  assert.match(server, /resolveUserId/);
+  // Clients get a generic 500; internals go to the log.
+  assert.match(server, /"internal error"/);
   // The same routed feature the other templates wire up.
   assert.match(files.get("src/router.ts") ?? "", /#features\/invoice-total\.ts/);
   // Same RLS-bearing migration as the other scaffolds.
@@ -189,6 +198,37 @@ test("node-service renders a runnable zero-dependency server", () => {
       .update(registry.render(spec).files.map((f) => `${f.path} ${f.contents}`).join(""))
       .digest("hex");
   assert.equal(digestOf(), digestOf());
+});
+
+test("a rendered node-service scaffold passes its own typecheck", () => {
+  // The regression this guards: a tsconfig flag that made every scaffold's
+  // `npm run typecheck` fail with TS2877 shipped because no test ever ran
+  // tsc against rendered output. This one does, with a stub feature standing
+  // in for the model's half.
+  const out = mkdtempSync(join(tmpdir(), "andromeda-scaffold-"));
+  try {
+    const { files } = registry.render(sampleSpec({ template: "node-service" }));
+    for (const file of files) {
+      mkdirSync(dirname(join(out, file.path)), { recursive: true });
+      writeFileSync(join(out, file.path), file.contents);
+    }
+    writeFileSync(
+      join(out, "features/invoice-total.ts"),
+      'import type { FeatureInput, FeatureResult } from "#features/contract.ts";\n' +
+        "export async function handle(_input: FeatureInput): Promise<FeatureResult> {\n" +
+        "  return { status: 200, body: {} };\n" +
+        "}\n",
+    );
+    // The scaffold's devDependencies (typescript, @types/node) are pinned to
+    // the same versions this repo installs, so its node_modules stands in.
+    symlinkSync(resolve("node_modules"), join(out, "node_modules"));
+    execFileSync(resolve("node_modules/.bin/tsc"), ["-p", "tsconfig.json"], {
+      cwd: out,
+      stdio: "pipe",
+    });
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
 });
 
 test("the registry refuses unsafe paths and duplicate files", () => {

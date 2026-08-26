@@ -71,8 +71,10 @@ const tsconfig = (): string =>
       lib: ["ES2023"],
       module: "NodeNext",
       moduleResolution: "nodenext",
+      // No rewriteRelativeImportExtensions: this scaffold never emits (Node
+      // strips types at run time), and with it enabled tsc rejects every
+      // non-relative `#features/*.ts` import with TS2877.
       allowImportingTsExtensions: true,
-      rewriteRelativeImportExtensions: true,
       verbatimModuleSyntax: true,
       erasableSyntaxOnly: true,
       noEmit: true,
@@ -101,7 +103,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm ci
+      # A rendered scaffold cannot include a real lockfile. Run \`npm install\`
+      # locally, commit package-lock.json, then switch this to \`npm ci\` so a
+      # drifted dependency fails the build.
+      - run: npm install
       - run: npm run typecheck
       - run: npm test
 `;
@@ -125,16 +130,27 @@ npm run dev        # or: npm start
 The server listens on \`PORT\` (default 3000) and answers \`GET /health\`.
 Apply \`supabase/migrations/\` to your Postgres before pointing the service at
 it.
+
+## Identity
+
+Features receive \`userId\` from the \`x-user-id\` header **only** when the
+request also carries \`x-proxy-secret\` matching the \`PROXY_AUTH_SECRET\`
+environment variable — the contract for running behind a reverse proxy that
+authenticates users and stamps the header. With no secret configured, every
+request is anonymous (\`userId: null\`). Never expose the service directly
+while trusting \`x-user-id\` without that secret: a bare header is not
+authentication.
 `;
 }
 
 function router(spec: ProjectSpec): string {
   const routed = spec.routes.filter((r) => r.feature);
-  const imports = [...new Set(routed.map((r) => r.feature))]
-    .map((f) => `import { handle as ${camel(f)} } from "#features/${f}.ts";`)
+  const bindings = bindingNames([...new Set(routed.map((r) => r.feature))]);
+  const imports = [...bindings]
+    .map(([f, name]) => `import { handle as ${name} } from "#features/${f}.ts";`)
     .join("\n");
   const table = routed
-    .map((r) => `  { method: ${JSON.stringify(r.method)}, path: ${JSON.stringify(r.path)}, handler: ${camel(r.feature)} },`)
+    .map((r) => `  { method: ${JSON.stringify(r.method)}, path: ${JSON.stringify(r.path)}, handler: ${bindings.get(r.feature)} },`)
     .join("\n");
 
   return `import type { FeatureHandler } from "#features/contract.ts";
@@ -153,23 +169,66 @@ ${table}
 }
 
 function server(spec: ProjectSpec): string {
-  return `import { createServer } from "node:http";
+  return `import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { routes } from "./router.ts";
 
 const MAX_BODY_BYTES = 1_000_000;
 
 /**
+ * Identity contract: \`x-user-id\` is honored only when the request also
+ * carries \`x-proxy-secret\` matching PROXY_AUTH_SECRET — proof it came
+ * through your authenticating proxy. No secret configured means every
+ * request is anonymous; a bare header is never authentication.
+ */
+const proxySecret = process.env.PROXY_AUTH_SECRET ?? "";
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const left = encoder.encode(a);
+  const right = encoder.encode(b);
+  let diff = left.length ^ right.length;
+  for (let i = 0; i < left.length; i++) {
+    diff |= (left[i] as number) ^ (right[i % right.length] ?? 0);
+  }
+  return diff === 0 && left.length > 0;
+}
+
+function resolveUserId(req: IncomingMessage): string | null {
+  if (proxySecret === "") return null;
+  const supplied = req.headers["x-proxy-secret"];
+  if (typeof supplied !== "string" || !constantTimeEqual(supplied, proxySecret)) return null;
+  const userId = req.headers["x-user-id"];
+  return typeof userId === "string" && userId !== "" ? userId : null;
+}
+
+/**
  * Deterministic request plumbing for ${spec.name}. Generated features never
  * parse requests or shape errors themselves.
  */
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", \`http://\${req.headers.host ?? "localhost"}\`);
+const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const reply = (status: number, body: unknown): void => {
+    // Serialize before writing the head: a body JSON cannot represent must
+    // become a clean 500, not a crash after the status line is on the wire.
+    let payload: string;
+    try {
+      payload = JSON.stringify(body) ?? "null";
+    } catch (err) {
+      console.error("unserializable response body", err);
+      status = 500;
+      payload = '{"error":"internal error"}';
+    }
     res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-    res.end(\`\${JSON.stringify(body)}\\n\`);
+    res.end(\`\${payload}\\n\`);
   };
 
   try {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", \`http://\${req.headers.host ?? "localhost"}\`);
+    } catch {
+      return reply(400, { error: "invalid request target" });
+    }
+
     if (url.pathname === "/health") {
       return reply(200, { ok: true, service: ${JSON.stringify(spec.name)} });
     }
@@ -196,17 +255,19 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    const userId = req.headers["x-user-id"];
     const result = await route.handler({
       method: req.method ?? "GET",
       path: url.pathname,
       query: Object.fromEntries(url.searchParams),
       body,
-      userId: typeof userId === "string" && userId !== "" ? userId : null,
+      userId: resolveUserId(req),
     });
     return reply(result.status, result.body);
   } catch (err) {
-    return reply(500, { error: err instanceof Error ? err.message : String(err) });
+    // Log the detail; clients get a generic error rather than internals.
+    console.error(err);
+    if (!res.headersSent) reply(500, { error: "internal error" });
+    else res.end();
   }
 });
 
@@ -225,3 +286,20 @@ const camel = (name: string): string => {
     .join("");
   return `${pascal.slice(0, 1).toLowerCase()}${pascal.slice(1)}`;
 };
+
+/**
+ * Unique import binding per feature id. Distinct slugs can camel-case to the
+ * same identifier ("a-b" and "a--b"), which would render a router that
+ * declares one binding twice and fails to parse.
+ */
+function bindingNames(features: string[]): Map<string, string> {
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const feature of features) {
+    let name = camel(feature);
+    for (let n = 2; taken.has(name); n++) name = `${camel(feature)}${n}`;
+    taken.add(name);
+    names.set(feature, name);
+  }
+  return names;
+}

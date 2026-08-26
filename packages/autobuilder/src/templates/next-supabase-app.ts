@@ -27,7 +27,10 @@ const DEV_DEPENDENCIES = {
 
 export const nextSupabaseApp: TemplateDefinition = {
   id: "next-supabase-app",
-  version: "1.0.0",
+  // 1.0.1: contract renders from the shared canonical source, and the
+  // generated tsconfig drops rewriteRelativeImportExtensions, which made the
+  // scaffold's own `npm run typecheck` fail with TS2877 on #features imports.
+  version: "1.0.1",
   description:
     "Next.js App Router on Vercel with Supabase Postgres, auth and row-level security.",
   dependencies: DEPENDENCIES,
@@ -91,8 +94,9 @@ function tsconfig(): string {
       lib: ["ES2023", "DOM", "DOM.Iterable"],
       module: "NodeNext",
       moduleResolution: "nodenext",
+      // No rewriteRelativeImportExtensions: nothing is emitted, and with it
+      // enabled tsc rejects `#features/*.ts` imports with TS2877.
       allowImportingTsExtensions: true,
-      rewriteRelativeImportExtensions: true,
       verbatimModuleSyntax: true,
       erasableSyntaxOnly: true,
       jsx: "preserve",

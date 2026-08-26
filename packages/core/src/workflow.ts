@@ -167,15 +167,32 @@ export class WorkflowRunner {
           windowMs: options.globalBudget.windowMs ?? DAY_MS,
         }
       : null;
-    if (this.#globalBudget && !(this.#globalBudget.limitUsd > 0)) {
-      throw new Error("global budget limit must be positive");
+    if (this.#globalBudget && !(Number.isFinite(this.#globalBudget.limitUsd) && this.#globalBudget.limitUsd > 0)) {
+      throw new Error("global budget limit must be a positive number");
+    }
+    if (this.#globalBudget && !(Number.isFinite(this.#globalBudget.windowMs) && this.#globalBudget.windowMs > 0)) {
+      throw new Error("global budget window must be a positive number of milliseconds");
     }
   }
 
+  /** Live meters of runs this runner is executing right now — see below. */
+  readonly #inFlight = new Map<string, () => number>();
+
   /**
-   * Spend across every run created inside the window, derived from the stored
+   * Spend across every run active inside the window, derived from the stored
    * records each time rather than kept as a counter — a counter can drift or
    * race; the records are the audit-grade truth this repo already trusts.
+   *
+   * Two deliberate choices. The window keys on `updatedAt` (last activity),
+   * not `createdAt`: an old run that resumes and spends today must count
+   * against today's window, at the conservative price of counting its whole
+   * spend rather than only the new part. And a run this runner is executing
+   * right now reports its live meter instead of its stale stored record, so
+   * overlapping starts in one process see each other's in-flight spend. Runs
+   * driven by *another* process are visible only as their last persisted
+   * spend — that cross-process gap is bounded by those runs' per-run
+   * ceilings, the same shape of documented overshoot as the meter's own
+   * one-completion lag.
    */
   async #globalSpentUsd(windowMs: number, excludeRunId?: string): Promise<number> {
     const cutoff = this.#clock.now() - windowMs;
@@ -183,7 +200,9 @@ export class WorkflowRunner {
     let total = 0;
     for (const { value } of runs) {
       if (value.id === excludeRunId) continue;
-      if (value.createdAt >= cutoff) total += value.spentUsd;
+      const live = this.#inFlight.get(value.id);
+      if (live) total += live();
+      else if (value.updatedAt >= cutoff) total += value.spentUsd;
     }
     return total;
   }
@@ -274,6 +293,9 @@ export class WorkflowRunner {
     if (this.#globalBudget) {
       // Cap to the global headroom, so an existing run keeps replaying and
       // delivering when the window is exhausted but cannot add new spend.
+      // The run's own prior spend counts against the window even when it is
+      // old — conservative on purpose: a resumed run re-enters the window
+      // the moment it acts, and under-counting here is how money escapes.
       const elsewhere = await this.#globalSpentUsd(this.#globalBudget.windowMs, record.id);
       const headroom = Math.max(0, this.#globalBudget.limitUsd - elsewhere - record.spentUsd);
       limitUsd = Math.min(limitUsd, record.spentUsd + headroom);
@@ -283,6 +305,23 @@ export class WorkflowRunner {
     // replay and deliver, and its first new completion throws.
     const meter = new CostMeter(Math.max(limitUsd, 1e-6), record.spentUsd);
     const ctx = new Context(record.id, audit, meter, record.checkpoints);
+    this.#inFlight.set(record.id, () => meter.spentUsd);
+    try {
+      return await this.#executeMetered(workflow, record, audit, meter, ctx);
+    } finally {
+      // Deleted only after the final persist below, so the global gate always
+      // sees this run as either live or stored — never neither.
+      this.#inFlight.delete(record.id);
+    }
+  }
+
+  async #executeMetered<I, O>(
+    workflow: WorkflowDefinition<I, O>,
+    record: RunRecord,
+    audit: AuditLog,
+    meter: CostMeter,
+    ctx: StepContext,
+  ): Promise<RunRecord> {
     let next: RunRecord;
 
     try {

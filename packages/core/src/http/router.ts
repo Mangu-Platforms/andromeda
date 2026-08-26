@@ -116,8 +116,15 @@ export function basicAuthGuard(password: string, realm = "andromeda"): RouterOpt
         decoded = "";
       }
       // Credentials are `user:password`; the password may itself contain ':'.
-      const supplied = new TextEncoder().encode(decoded.slice(decoded.indexOf(":") + 1));
-      if (decoded.includes(":") && timingSafeEqual(supplied, expected)) return null;
+      // Compare the raw decoded bytes: `atob` yields a Latin-1 view of the
+      // client's UTF-8 bytes, and re-encoding that view through TextEncoder
+      // would double-encode anything non-ASCII, locking out every correct
+      // password that isn't plain ASCII.
+      const colon = decoded.indexOf(":");
+      if (colon >= 0) {
+        const bytes = Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+        if (timingSafeEqual(bytes.subarray(colon + 1), expected)) return null;
+      }
     }
     return new Response("authentication required\n", {
       status: 401,
@@ -126,6 +133,56 @@ export function basicAuthGuard(password: string, realm = "andromeda"): RouterOpt
         "content-type": "text/plain; charset=utf-8",
       },
     });
+  };
+}
+
+/**
+ * Refuses state-changing requests that a browser attributes to another origin.
+ *
+ * Basic credentials are attached by the browser automatically, so without
+ * this a page on any site could submit the console's approve form on behalf
+ * of a logged-in operator (CSRF). Browsers send `Origin` (and increasingly
+ * `Sec-Fetch-Site`) on such requests; when either says cross-origin the
+ * request is refused. Non-browser clients send neither header and pass —
+ * this guards the ambient-credential path, not the deliberate API call.
+ */
+export function sameOriginPostGuard(): RouterOptions["guard"] {
+  const forbidden = (): Response =>
+    new Response("cross-origin request refused\n", {
+      status: 403,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+
+  return (req: Request): Response | null => {
+    if (req.method === "GET" || req.method === "HEAD") return null;
+
+    const site = req.headers.get("sec-fetch-site");
+    if (site && site !== "same-origin" && site !== "none") return forbidden();
+
+    const origin = req.headers.get("origin");
+    if (origin) {
+      // "null" is what sandboxed and opaque contexts send; treat as foreign.
+      if (origin === "null") return forbidden();
+      try {
+        if (new URL(origin).origin !== new URL(req.url).origin) return forbidden();
+      } catch {
+        return forbidden();
+      }
+    }
+    return null;
+  };
+}
+
+/** Run guards in order; the first refusal wins. */
+export function composeGuards(
+  ...guards: Array<RouterOptions["guard"]>
+): RouterOptions["guard"] {
+  return (req: Request): Response | null => {
+    for (const guard of guards) {
+      const denied = guard?.(req);
+      if (denied) return denied;
+    }
+    return null;
   };
 }
 

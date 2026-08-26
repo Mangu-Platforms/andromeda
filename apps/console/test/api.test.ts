@@ -70,6 +70,46 @@ test("a configured password gates every route; without one the console is open",
   assert.equal((await guarded.handle(authed)).status, 200);
 });
 
+test("cross-origin form posts are refused even with valid credentials", async () => {
+  const { app } = await consoleUnderTest();
+  const guarded = createRouter(app, { password: "hunter2" });
+  const auth = `Basic ${Buffer.from("op:hunter2").toString("base64")}`;
+
+  // The browser attaches Basic credentials automatically, so a foreign page
+  // could otherwise submit the decision form with the operator's ambient auth.
+  const forged = new Request("http://console/runs", {
+    method: "POST",
+    headers: {
+      authorization: auth,
+      origin: "http://evil.example",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ intent: "x", requestedBy: "y" }).toString(),
+  });
+  assert.equal((await guarded.handle(forged)).status, 403);
+
+  // Same-origin posts and header-less API clients still work.
+  const own = new Request("http://console/runs", {
+    method: "POST",
+    headers: {
+      authorization: auth,
+      origin: "http://console",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ intent: "a tool", requestedBy: "op" }).toString(),
+  });
+  assert.notEqual((await guarded.handle(own)).status, 403);
+});
+
+test("a nonsensical global budget fails app construction instead of silently uncapping", async () => {
+  for (const globalBudgetUsd of [Number.NaN, 0, -5]) {
+    await assert.rejects(
+      createConsoleApp({ llm: demoProvider(), globalBudgetUsd }),
+      /globalBudgetUsd must be a positive number/,
+    );
+  }
+});
+
 test("a build runs, stops for review, and can be approved through the UI", async () => {
   const { app, router } = await consoleUnderTest();
 

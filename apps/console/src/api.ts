@@ -1,4 +1,13 @@
-import { AuditLog, Router, basicAuthGuard, html, json, systemClock } from "@andromeda/core";
+import {
+  AuditLog,
+  Router,
+  basicAuthGuard,
+  composeGuards,
+  html,
+  json,
+  sameOriginPostGuard,
+  systemClock,
+} from "@andromeda/core";
 import type { ApprovalRequest, RunRecord } from "@andromeda/core";
 import type { ConsoleApp } from "./app.ts";
 import { dashboard, errorPage, reviewPage } from "./views.ts";
@@ -22,9 +31,14 @@ export interface RouterOptions {
 }
 
 export function createRouter(app: ConsoleApp, options: RouterOptions = {}): Router {
-  const router = new Router(
-    options.password ? { guard: basicAuthGuard(options.password) } : {},
-  );
+  // CSRF protection is unconditional: the browser attaches Basic credentials
+  // by itself, so the auth guard alone would not stop a foreign page from
+  // posting an approval with the operator's ambient credentials.
+  const router = new Router({
+    guard: options.password
+      ? composeGuards(basicAuthGuard(options.password), sameOriginPostGuard())
+      : sameOriginPostGuard(),
+  });
 
   router.get("/", async () => html(dashboard(await app.runner.list(), app.demoMode)));
 

@@ -152,6 +152,40 @@ test("an existing branch fails loudly instead of overwriting history", async () 
   );
 });
 
+test("a repo plan that rejects draft PRs falls back to a regular PR", async () => {
+  // Private repositories on GitHub Free return 422 for draft:true. The branch
+  // already exists by then, so the delivery must complete rather than strand it.
+  let calls = 0;
+  const { fetchImpl, requests } = fakeGitHub();
+  const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/pulls") && ++calls === 1) {
+      requests.push({ method: "POST", url: String(input), headers: {}, body: JSON.parse(String(init?.body)) });
+      return new Response(
+        JSON.stringify({ message: "Draft pull requests are not supported in this repository." }),
+        { status: 422 },
+      );
+    }
+    return fetchImpl(input, init);
+  }) as typeof fetch;
+
+  const receipt = await delivery(wrapped).deliver(request);
+  assert.equal(receipt.location, "https://github.com/acme/site/pull/7");
+  const pulls = requests.filter((r) => r.url.endsWith("/pulls"));
+  assert.equal(pulls.length, 2);
+  assert.equal((pulls[0]?.body as { draft?: boolean }).draft, true);
+  assert.equal((pulls[1]?.body as { draft?: boolean }).draft, undefined);
+});
+
+test("a 422 that is not about drafts is not retried", async () => {
+  const { fetchImpl } = fakeGitHub({
+    "POST /repos/acme/site/pulls": {
+      status: 422,
+      body: { message: "Validation Failed: base does not exist" },
+    },
+  });
+  await assert.rejects(delivery(fetchImpl).deliver(request), /base does not exist/);
+});
+
 test("api errors never leak the token", async () => {
   const { fetchImpl } = fakeGitHub({
     "POST /repos/acme/site/git/trees": { status: 500, body: { message: "boom" } },

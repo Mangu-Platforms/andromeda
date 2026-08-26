@@ -239,6 +239,18 @@ The console is already architected for this: routes are `(Request, params) => Re
 
 ---
 
+## 2b. Adversarial review round (post-fix)
+
+After the punch-list fixes landed, a 25-agent adversarial review (5 dimensions × find-then-refute) was run over the branch diff; 20 raw findings, 18 confirmed, all fixed on this branch:
+
+- **Auth:** Basic-auth guard double-encoded credentials, so any non-ASCII password could never authenticate (fail-closed lockout) — now compares raw decoded bytes, with a `café🔑` test. **CSRF:** browsers attach Basic credentials automatically, so a foreign page could submit the approve form; a `sameOriginPostGuard` (Origin/Sec-Fetch-Site) now refuses cross-origin state changes unconditionally.
+- **Global budget:** window was keyed on `createdAt`, letting post-resume spend escape every window — now keyed on last activity (conservative over-count). Overlapping starts in one process saw only persisted spend — the runner now reports live in-flight meters to the gate (cross-process gap remains, bounded by per-run ceilings and documented). `windowMs`/`limitUsd` are validated; a NaN/0/negative `ANDROMEDA_GLOBAL_BUDGET_USD` now fails app construction loudly instead of silently uncapping.
+- **Delivery:** GitHub Free private repos reject draft PRs with 422 — the delivery now falls back to a regular PR rather than stranding the created branch (non-draft 422s still fail).
+- **Templates (all three):** the rendered tsconfig's `rewriteRelativeImportExtensions` made every scaffold's own `npm run typecheck` fail with TS2877 on `#features/*.ts` imports — removed, and a new test renders `node-service` and runs `tsc` against it so this class of bug cannot ship silently again. `node-service`'s server no longer crashes on a malformed Host header or an unserializable feature result, returns generic 500s (details go to the log), and honors `x-user-id` only with a proxy-attested shared secret (`PROXY_AUTH_SECRET`) instead of trusting a bare client header. Router import bindings are de-duplicated (`a-b` vs `a--b`). Its CI uses `npm install` with instructions to commit the lockfile and switch to `npm ci` (a rendered scaffold cannot contain a real lockfile).
+- **Docs:** the Vercel route notes that the global ceiling is per-warm-instance without the Supabase store.
+
+Notable refuted claims (checked, not real): empty-string password "fails open" (it correctly means auth-off), and the anon-key store fallback being nonfunctional under the shipped migration (deny-all is the documented intent).
+
 ## 3. Release-blocking punch list (ordered)
 
 Statuses updated as fixes landed on this branch after the audit:

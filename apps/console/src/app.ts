@@ -54,6 +54,15 @@ export interface ConsoleOptions {
  * repair — runnable with no API key and no cloud account.
  */
 export async function createConsoleApp(options: ConsoleOptions = {}): Promise<ConsoleApp> {
+  if (
+    options.globalBudgetUsd !== undefined &&
+    !(Number.isFinite(options.globalBudgetUsd) && options.globalBudgetUsd > 0)
+  ) {
+    // A typo'd ANDROMEDA_GLOBAL_BUDGET_USD must not silently mean "no cap".
+    throw new Error(
+      `globalBudgetUsd must be a positive number, got ${String(options.globalBudgetUsd)}`,
+    );
+  }
   const demoMode = !options.llm;
   const llm = options.llm ?? demoProvider();
   const store: Store = options.store ?? (options.stateDir ? new FileStore(options.stateDir) : new MemoryStore());

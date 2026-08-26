@@ -9,7 +9,7 @@ import { CostMeter, MeteredProvider } from "../src/metering.ts";
 import { WorkflowRunner, type StepContext } from "../src/workflow.ts";
 import { BudgetExceededError, GlobalBudgetExceededError } from "../src/errors.ts";
 import { MockLLMProvider } from "../src/llm/mock.ts";
-import { Router, basicAuthGuard, json } from "../src/http/router.ts";
+import { Router, basicAuthGuard, composeGuards, json, sameOriginPostGuard } from "../src/http/router.ts";
 import { costUsd } from "../src/llm/pricing.ts";
 
 const harness = () => ({
@@ -267,6 +267,118 @@ test("the global budget refuses new runs, caps in-flight ones, and rolls with it
   // Spend ages out of the rolling window; new work is admitted again.
   t += 24 * 60 * 60 * 1000 + 1;
   assert.equal((await runner.start(spender(1), null)).status, "completed");
+
+  // Config that would silently neutralize the ceiling is refused loudly.
+  for (const globalBudget of [
+    { limitUsd: 0 },
+    { limitUsd: Number.NaN },
+    { limitUsd: 5, windowMs: 0 },
+    { limitUsd: 5, windowMs: Number.NaN },
+    { limitUsd: 5, windowMs: -1 },
+  ]) {
+    assert.throws(() => new WorkflowRunner({ store, clock, ids, globalBudget }));
+  }
+});
+
+test("overlapping runs in one process see each other's in-flight spend", async () => {
+  const { store, ids } = harness();
+  const t = 1_700_000_000_000;
+  const clock = { now: () => t };
+  const runner = new WorkflowRunner({
+    store,
+    clock,
+    ids,
+    budgetUsd: 5,
+    globalBudget: { limitUsd: 6 },
+  });
+
+  const spend = (ctx: StepContext, usd: number) =>
+    ctx.meter.record({ purpose: "gen", model: "m", costUsd: usd, inputTokens: 1, outputTokens: 1 });
+
+  const inner = {
+    name: "inner",
+    async run(ctx: StepContext) {
+      await ctx.step("spend", async () => {
+        spend(ctx, 4);
+        return null;
+      });
+      return "done";
+    },
+  };
+
+  // The outer run spends $4 and, while still executing (nothing persisted
+  // yet), starts a second run on the same runner. Without live in-flight
+  // metering the inner run would see $0 spent and receive the full per-run
+  // ceiling; with it, its meter is capped to the $2 of real headroom.
+  const outer = {
+    name: "outer",
+    async run(ctx: StepContext) {
+      await ctx.step("spend", async () => {
+        spend(ctx, 4);
+        return null;
+      });
+      const innerOutcome = await ctx.step("overlap", async () => {
+        const record = await runner.start(inner, null);
+        return { status: record.status, error: record.error?.name ?? null };
+      });
+      return innerOutcome;
+    },
+  };
+
+  const finished = await runner.start(outer, null);
+  assert.equal(finished.status, "completed");
+  assert.deepEqual(finished.result, { status: "failed", error: "BudgetExceededError" });
+});
+
+test("a resumed run's new spend counts against the current window, not its creation date", async () => {
+  const { store, ids } = harness();
+  let t = 1_700_000_000_000;
+  const clock = { now: () => t };
+  const runner = new WorkflowRunner({
+    store,
+    clock,
+    ids,
+    budgetUsd: 5,
+    globalBudget: { limitUsd: 6 },
+  });
+
+  const gatedSpender = {
+    name: "gated-spender",
+    async run(ctx: StepContext) {
+      await ctx.step("approval", async () => {
+        ctx.suspend("waiting", null);
+      });
+      await ctx.step("late-spend", async () => {
+        ctx.meter.record({ purpose: "gen", model: "m", costUsd: 4, inputTokens: 1, outputTokens: 1 });
+        return null;
+      });
+      return "done";
+    },
+  };
+
+  const suspended = await runner.start(gatedSpender, null);
+  assert.equal(suspended.status, "suspended");
+
+  // Two days later the run resumes and spends $4. Keyed on creation date
+  // that spend would fall outside every future window; keyed on activity it
+  // counts now, so a new maximal run is refused rather than doubling the cap.
+  t += 2 * 24 * 60 * 60 * 1000;
+  const resumed = await runner.resume(gatedSpender, suspended.id, { approved: true });
+  assert.equal(resumed.status, "completed");
+
+  const spender = {
+    name: "spender",
+    async run(ctx: StepContext) {
+      await ctx.step("spend", async () => {
+        ctx.meter.record({ purpose: "gen", model: "m", costUsd: 4, inputTokens: 1, outputTokens: 1 });
+        return null;
+      });
+      return "done";
+    },
+  };
+  const capped = await runner.start(spender, null);
+  assert.equal(capped.status, "failed");
+  assert.equal(capped.error?.name, "BudgetExceededError");
 });
 
 test("an exhausted global window never blocks delivering an approved run, only new spend", async () => {
@@ -351,6 +463,12 @@ test("a router guard runs before any route and can refuse the request", async ()
   assert.equal((await guarded.handle(credential("anyone", "s3cre"))).status, 401);
   assert.equal((await guarded.handle(credential("anyone", "s3cretx"))).status, 401);
 
+  // Non-ASCII passwords must round-trip: the guard advertises charset UTF-8,
+  // so it must compare the client's raw UTF-8 bytes, not a re-encoding.
+  const unicode = new Router({ guard: basicAuthGuard("café🔑") }).get("/", () => json({ ok: true }));
+  assert.equal((await unicode.handle(credential("op", "café🔑"))).status, 200);
+  assert.equal((await unicode.handle(credential("op", "cafe"))).status, 401);
+
   const garbled = await guarded.handle(
     new Request("http://x/", { headers: { authorization: "Basic %%%not-base64%%%" } }),
   );
@@ -361,6 +479,50 @@ test("a router guard runs before any route and can refuse the request", async ()
   // No guard configured: the router is unchanged.
   const open = new Router().get("/", () => json({ ok: true }));
   assert.equal((await open.handle(new Request("http://x/"))).status, 200);
+});
+
+test("the same-origin guard refuses cross-origin browser posts and nothing else", async () => {
+  const guarded = new Router({ guard: sameOriginPostGuard() })
+    .get("/", () => json({ page: true }))
+    .post("/runs", () => json({ started: true }));
+
+  const post = (headers: Record<string, string>) =>
+    guarded.handle(new Request("http://console/runs", { method: "POST", headers }));
+
+  // Browser posting from another site: refused however it is signalled.
+  assert.equal((await post({ origin: "http://evil.example" })).status, 403);
+  assert.equal((await post({ origin: "null" })).status, 403);
+  assert.equal((await post({ origin: "not a url" })).status, 403);
+  assert.equal((await post({ "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await post({ "sec-fetch-site": "same-site" })).status, 403);
+
+  // The console's own forms and non-browser API clients pass.
+  assert.equal((await post({ origin: "http://console" })).status, 200);
+  assert.equal((await post({ "sec-fetch-site": "same-origin", origin: "http://console" })).status, 200);
+  assert.equal((await post({})).status, 200);
+
+  // Reads are never blocked — CSRF is a state-change concern.
+  const read = await guarded.handle(
+    new Request("http://console/", { headers: { origin: "http://evil.example" } }),
+  );
+  assert.equal(read.status, 200);
+
+  // composeGuards: first refusal wins, and order is respected.
+  const both = new Router({
+    guard: composeGuards(basicAuthGuard("pw"), sameOriginPostGuard()),
+  }).post("/runs", () => json({ started: true }));
+  const anonymous = await both.handle(new Request("http://console/runs", { method: "POST" }));
+  assert.equal(anonymous.status, 401);
+  const authedCrossSite = await both.handle(
+    new Request("http://console/runs", {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from("op:pw").toString("base64")}`,
+        origin: "http://evil.example",
+      },
+    }),
+  );
+  assert.equal(authedCrossSite.status, 403);
 });
 
 test("the mock provider scripts a retry sequence per purpose", async () => {
