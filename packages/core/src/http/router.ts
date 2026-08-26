@@ -84,9 +84,12 @@ export function html(body: string, status = 200): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
       // The console renders agent-authored diffs and model text. A restrictive
-      // CSP keeps a prompt-injected <script> in generated code inert.
+      // CSP keeps a prompt-injected <script> in generated code inert: scripts
+      // are refused outright, and forms may only post back to the console
+      // itself — 'none' here would block the console's own approve/reject
+      // forms, which no router-level test can observe.
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; form-action 'self'",
       "x-content-type-options": "nosniff",
     },
   });

@@ -41,6 +41,12 @@ test("html responses carry a restrictive content security policy", async () => {
   const response = await router.handle(new Request("http://console/"));
   const csp = response.headers.get("content-security-policy") ?? "";
   assert.match(csp, /default-src 'none'/);
+  // Scripts must be refused outright — 'unsafe-inline' would let a
+  // prompt-injected <script> execute if escaping ever regressed.
+  assert.match(csp, /script-src 'none'/);
+  // 'self', not 'none': the console's own approve/reject forms post back to
+  // it, and browsers enforce form-action even though router tests cannot.
+  assert.match(csp, /form-action 'self'/);
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 });
 
