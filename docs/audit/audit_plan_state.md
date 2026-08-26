@@ -241,8 +241,10 @@ The console is already architected for this: routes are `(Request, params) => Re
 
 ## 3. Release-blocking punch list (ordered)
 
-1. Fix CSP `form-action 'none'` → `'self'`, `script-src 'unsafe-inline'` → `'none'` (`packages/core/src/http/router.ts:89`) + a test asserting it.
-2. Put auth (or at minimum Vercel Deployment Protection) in front of any non-local deployment.
-3. Commit `supabase/migrations/0001_andromeda_store.sql` + root `.env.example`.
-4. Repoint the GitHub default branch to `main`; fix README's "74 tests".
-5. Then: `GitHubPullRequestDelivery` — the commercial gap.
+Statuses updated as fixes landed on this branch after the audit:
+
+1. ✅ **Done** — CSP now `script-src 'none'; form-action 'self'` with both directives pinned by test.
+2. ✅ **Done (single-operator)** — `ANDROMEDA_CONSOLE_PASSWORD` gates every route behind HTTP Basic auth (constant-time compare, portable guard in `Router`). Real accounts (Supabase Auth) remain future work; Vercel Deployment Protection still recommended in depth.
+3. ✅ **Done** — `supabase/migrations/0001_andromeda_store.sql` and root `.env.example` committed.
+4. ✅ README fixed. ⏳ Repointing the GitHub default branch to `main` needs an admin in repo settings — still open.
+5. ✅ **Done** — `GitHubPullRequestDelivery` ships behind the approval gate (`ANDROMEDA_DELIVERY_REPO` + `GITHUB_TOKEN`), create-only refs, draft PRs; console server, CLI and Vercel route all select it from the environment.

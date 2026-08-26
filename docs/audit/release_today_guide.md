@@ -48,8 +48,8 @@ npm run console                           # http://localhost:4200
 ```
 
 - Dashboard lists runs; run page shows compiled spec, risk breakdown, every generated file, per-feature test output, and the audit trail, with approve/reject.
-- **[BLOCKED]** Submitting the "new build" form and the approve/reject forms from a real browser is blocked by the response CSP `form-action 'none'` (`packages/core/src/http/router.ts:89`) — the browser refuses the `<form method="post">` submit. One-line fix (`form-action 'self'`; also tighten `script-src` to `'none'`), then this path is fully releasable. Until then, drive decisions via the CLI or `POST /runs/:id/decision` with an `application/json` body.
-- There is **no login**: keep the console on localhost until auth or platform-level protection is in place.
+- The CSP that previously blocked the browser forms (`form-action 'none'`) is fixed on this branch — forms submit, scripts stay refused (`script-src 'none'`), both pinned by test.
+- Set `ANDROMEDA_CONSOLE_PASSWORD` to require HTTP Basic auth on every route; without it the console is open and belongs on localhost only.
 
 ## 5. Live mode **[LIVE-ONLY]**
 
@@ -84,9 +84,8 @@ Console and Vercel deployment now share durable run state; approvals survive res
 `apps/web` is the deployable: a Next.js catch-all that re-exports the console router.
 
 1. Import the repo in Vercel, **root directory `apps/web`** (its `vercel.json` sets framework/build).
-2. Set env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY` (or omit for demo mode), `ANDROMEDA_BUDGET_USD`.
-3. **Turn on Vercel Deployment Protection** — the app has no auth of its own; an open URL means strangers can spend budget and approve deliveries.
-4. Note: delivery on Vercel writes to `/tmp/andromeda/out` (ephemeral). Real remote delivery waits on the `DeliveryTarget` GitHub implementation.
+2. Set env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY` (or omit for demo mode), `ANDROMEDA_BUDGET_USD`, and **`ANDROMEDA_CONSOLE_PASSWORD`** — without it the deployment is open and strangers can spend budget and approve deliveries. Vercel Deployment Protection on top is good depth.
+3. For real remote delivery, set `ANDROMEDA_DELIVERY_REPO=owner/repo` and `GITHUB_TOKEN` (contents:write + pull-requests:write): approved builds open a draft PR there instead of writing to the ephemeral `/tmp/andromeda/out`.
 
 ## 8. Release checklist (what "today" actually requires)
 
@@ -94,9 +93,10 @@ Console and Vercel deployment now share durable run state; approvals survive res
 |---|---|---|
 | 1 | `npm run check` green | ✅ verified |
 | 2 | CLI end-to-end incl. approval + delivered project's own tests | ✅ verified |
-| 3 | Console browser forms | ❌ fix CSP first (one line + test) |
-| 4 | Auth in front of any shared URL | ❌ Deployment Protection now, Supabase Auth next |
-| 5 | Supabase migration committed | ❌ SQL above, ~30 min |
-| 6 | Default branch → `main`, README test-count fix | ❌ 10 min |
+| 3 | Console browser forms | ✅ CSP fixed (`form-action 'self'`, `script-src 'none'`), pinned by test |
+| 4 | Auth in front of any shared URL | ✅ set `ANDROMEDA_CONSOLE_PASSWORD` (HTTP Basic on every route); Deployment Protection as defence in depth |
+| 5 | Supabase migration committed | ✅ `supabase/migrations/0001_andromeda_store.sql` |
+| 6 | Default branch → `main`, README test-count fix | ✅ README fixed; branch repoint needs a repo admin |
+| 7 | Real remote delivery | ✅ `ANDROMEDA_DELIVERY_REPO` + `GITHUB_TOKEN` → approved builds open a draft PR |
 
-Items 3–6 are hours, not days. Ship the CLI path today unconditionally; ship the hosted console the moment 3 and 4 land.
+Everything on the software side of this checklist is done on this branch; the one remaining item (default-branch repoint) is a GitHub settings change only an admin can make.

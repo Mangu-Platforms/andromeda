@@ -113,7 +113,7 @@ never a paragraph explaining the record.
 
 ## Running it for real
 
-Three things are deliberately swappable, and two of them must be swapped before
+Three things are deliberately swappable, and the first must be swapped before
 this handles anyone else's work:
 
 - **`Sandbox`** — `LocalSandbox` confines paths, strips the environment, runs
@@ -123,9 +123,11 @@ this handles anyone else's work:
 - **`Store`** — `MemoryStore`, `FileStore` and a PostgREST-backed
   `SupabaseStore` ship; set `SUPABASE_URL` and a key after applying
   `supabase/migrations/0001_andromeda_store.sql` and run state becomes durable.
-- **`DeliveryTarget`** — `LocalDirectoryDelivery` writes to disk. A GitHub
-  implementation opening a pull request goes through the same seam, and stays
-  behind the same approval gate.
+- **`DeliveryTarget`** — `LocalDirectoryDelivery` writes to disk, and
+  `GitHubPullRequestDelivery` opens a draft pull request in a repository you
+  own (`ANDROMEDA_DELIVERY_REPO=owner/repo` + `GITHUB_TOKEN`). Both sit behind
+  the same approval gate; nothing is pushed anywhere before a named human
+  approves.
 
 ## Development
 
