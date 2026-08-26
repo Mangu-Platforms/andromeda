@@ -219,7 +219,7 @@ test("the templates endpoint reports what can actually be built", async () => {
   const { router } = await consoleUnderTest();
   const body = (await (await router.handle(new Request("http://console/api/templates"))).json()) as
     Array<{ id: string; dependencies: Record<string, string> }>;
-  assert.deepEqual(body.map((t) => t.id).sort(), ["next-supabase-app", "worker-api"]);
+  assert.deepEqual(body.map((t) => t.id).sort(), ["next-supabase-app", "node-service", "worker-api"]);
   for (const template of body) {
     for (const version of Object.values(template.dependencies)) {
       assert.match(version, /^\d+\.\d+\.\d+/);

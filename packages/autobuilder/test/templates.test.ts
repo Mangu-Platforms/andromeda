@@ -152,16 +152,43 @@ test("secrets are documented but never written into deployment config", () => {
   );
 });
 
-test("both templates expose the same feature contract", () => {
-  const next = fileMap().get("features/contract.ts") ?? "";
-  const workerFiles = new Map(
-    registry.render(sampleSpec({ template: "worker-api" })).files.map((f) => [f.path, f.contents]),
-  );
-  const worker = workerFiles.get("features/contract.ts") ?? "";
-  for (const source of [next, worker]) {
-    assert.match(source, /export interface FeatureInput/);
-    assert.match(source, /export type FeatureHandler/);
-  }
+test("every template exposes the identical feature contract", () => {
+  // Portability of generated features between scaffolds depends on the
+  // contract being byte-identical, not merely shaped alike.
+  const contracts = registry.ids().map((template) => {
+    const files = new Map(
+      registry.render(sampleSpec({ template })).files.map((f) => [f.path, f.contents]),
+    );
+    const contract = files.get("features/contract.ts") ?? "";
+    assert.match(contract, /export interface FeatureInput/, `${template} lacks the contract`);
+    assert.match(contract, /export type FeatureHandler/, `${template} lacks the contract`);
+    return contract;
+  });
+  for (const contract of contracts) assert.equal(contract, contracts[0]);
+});
+
+test("node-service renders a runnable zero-dependency server", () => {
+  const spec = sampleSpec({ template: "node-service" });
+  const files = new Map(registry.render(spec).files.map((f) => [f.path, f.contents]));
+
+  const pkg = JSON.parse(files.get("package.json") ?? "{}");
+  assert.deepEqual(pkg.dependencies, {}, "the service must have zero runtime dependencies");
+  assert.deepEqual(pkg.imports, { "#features/*": "./features/*" });
+  assert.match(pkg.scripts.test, /node --test/);
+
+  const server = files.get("src/server.ts") ?? "";
+  assert.match(server, /node:http/);
+  assert.match(server, /\/health/);
+  // The same routed feature the other templates wire up.
+  assert.match(files.get("src/router.ts") ?? "", /#features\/invoice-total\.ts/);
+  // Same RLS-bearing migration as the other scaffolds.
+  assert.match(files.get("supabase/migrations/0001_init.sql") ?? "", /enable row level security/);
+
+  const digestOf = () =>
+    createHash("sha256")
+      .update(registry.render(spec).files.map((f) => `${f.path} ${f.contents}`).join(""))
+      .digest("hex");
+  assert.equal(digestOf(), digestOf());
 });
 
 test("the registry refuses unsafe paths and duplicate files", () => {

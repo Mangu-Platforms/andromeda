@@ -35,7 +35,7 @@ rubber-stamp.
 
 | Step | Status |
 |---|---|
-| 1. Template registry + spec compiler | Done. Two version-pinned templates, strict validator, propose/validate/repair loop. |
+| 1. Template registry + spec compiler | Done. Three version-pinned templates (Vercel app, Workers API, self-hosted Node service), strict validator, propose/validate/repair loop. |
 | 2. Wire one deploy target end-to-end | Partial. `next-supabase-app` renders a complete Vercel + Supabase project — config, migrations with RLS, CI, route handlers — and `DeliveryTarget` writes it out. Pushing to Vercel/Supabase APIs is not wired. |
 | 3. Feature layer behind a test-gate | Done, and executing for real: generated code runs under `node --test` in a sandbox. |
 | 4. PR-review UI | Done as a review console: spec, risk breakdown, every file, per-feature test output, audit trail, approve/reject. Delivery targets a directory, or opens a draft pull request in the customer's repository via `GitHubPullRequestDelivery`. |
@@ -81,8 +81,9 @@ Ordered by how quickly it would bite:
 1. **The sandbox is not a security boundary.** Fine for a single-tenant build
    machine; not fine the moment someone else's prompt runs on it. Container
    first.
-2. **Two templates.** The library is the moat the blueprint describes, and two
-   templates is a demonstration of the registry, not a library.
+2. **Three templates.** The library is the moat the blueprint describes; three
+   deployment shapes (Vercel, Workers, self-hosted Node) cover the registry's
+   breadth, but a moat is domain templates, not runtime targets.
 3. **Features are pure request handlers.** The contract that makes generated
    code testable without a database also means a feature cannot yet query one.
    Widening it — a repository interface the template provides and the sandbox

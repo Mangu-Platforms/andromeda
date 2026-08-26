@@ -69,7 +69,7 @@ Layout: `spec/` (compiler + strict validator + JSON schema — the trust boundar
 - **Guard:** `features/guard.ts` `checkFeatureSource` — import allowlist runs before anything is written to the sandbox.
 - **Risk (`pr/risk.ts` `assessRisk`):** transparent hand-tuned sum — failed gate +60, repairs +5 each, ownerless (deny-all) tables +10, auth +10, secrets +5 each, deploy target +10, write routes +3 each (cap 15), >40 files +10. A score of 0 still requires human approval.
 - **Delivery seam (`pr/delivery.ts`):** `DeliveryTarget` interface; implementations: `LocalDirectoryDelivery` (path-traversal-checked) and `NullDelivery`. **No GitHub PR implementation** — the seam is documented as where it goes. `[GAP]`
-- **Templates:** exactly two — `next-supabase-app` (complete Vercel + Supabase project: config, migrations with RLS on by default, CI, route handlers) and `worker-api`. So "one official Mangu Next+Supabase scaffold" **already exists**.
+- **Templates:** three as of this branch — `next-supabase-app` (complete Vercel + Supabase project: config, migrations with RLS on by default, CI, route handlers), `worker-api` (Cloudflare Workers), and `node-service` (self-hosted zero-dependency Node 22 service). All render the byte-identical `features/contract.ts` from one canonical source. So "one official Mangu Next+Supabase scaffold" **already exists**.
 
 ### 1.4 `apps/console`
 
