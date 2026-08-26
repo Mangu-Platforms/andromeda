@@ -1,6 +1,12 @@
 import { AuditLog, systemClock } from "@andromeda/core";
 import { proposalFromRun, type BuildResult } from "@andromeda/autobuilder";
-import { createConsoleApp, providerFromEnv, type ConsoleApp } from "./app.ts";
+import {
+  createConsoleApp,
+  deliveryFromEnv,
+  providerFromEnv,
+  storeFromEnv,
+  type ConsoleApp,
+} from "./app.ts";
 
 /**
  * Headless driver for the same pipeline the console serves.
@@ -58,12 +64,20 @@ export function parseArgs(argv: string[]): Args {
 }
 
 async function app(flags: Record<string, string | boolean>): Promise<ConsoleApp> {
-  const llm = await providerFromEnv();
+  // Same environment seams as the server, so a CLI `approve` acts on the very
+  // run the console is showing — not a parallel file-backed copy of it.
+  const [llm, store, delivery] = await Promise.all([
+    providerFromEnv(),
+    storeFromEnv(),
+    deliveryFromEnv(),
+  ]);
   return createConsoleApp({
     stateDir: process.env.ANDROMEDA_STATE_DIR ?? "./.andromeda/state",
     outputDir: process.env.ANDROMEDA_OUT_DIR ?? "./.andromeda/out",
     budgetUsd: Number(flags.budget ?? process.env.ANDROMEDA_BUDGET_USD ?? 5),
     ...(llm ? { llm } : {}),
+    ...(store ? { store } : {}),
+    ...(delivery ? { delivery } : {}),
   });
 }
 

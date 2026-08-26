@@ -12,4 +12,5 @@ export * from "./features/guard.ts";
 export * from "./features/generate.ts";
 export * from "./pr/risk.ts";
 export * from "./pr/delivery.ts";
+export * from "./pr/github.ts";
 export * from "./pipeline.ts";

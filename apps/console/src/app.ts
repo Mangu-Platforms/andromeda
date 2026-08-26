@@ -13,6 +13,7 @@ import {
   LocalSandbox,
   TemplateRegistry,
   createAutoBuilder,
+  type DeliveryTarget,
 } from "@andromeda/autobuilder";
 import { demoProvider } from "./demo.ts";
 
@@ -31,8 +32,10 @@ export interface ConsoleOptions {
   stateDir?: string;
   /** A store to use directly — takes priority over `stateDir`. See `storeFromEnv`. */
   store?: Store;
-  /** Where approved builds are written. */
+  /** Where approved builds are written. Ignored if `delivery` is set. */
   outputDir?: string;
+  /** Where approved builds go — takes priority over `outputDir`. See `deliveryFromEnv`. */
+  delivery?: DeliveryTarget;
   /** Per-run spend ceiling in USD. */
   budgetUsd?: number;
   llm?: LLMProvider;
@@ -56,7 +59,7 @@ export async function createConsoleApp(options: ConsoleOptions = {}): Promise<Co
     llm,
     registry,
     gate,
-    delivery: new LocalDirectoryDelivery(options.outputDir ?? "./.andromeda/out"),
+    delivery: options.delivery ?? new LocalDirectoryDelivery(options.outputDir ?? "./.andromeda/out"),
     createSandbox: () => LocalSandbox.create(),
   });
 
@@ -96,4 +99,15 @@ export async function providerFromEnv(): Promise<LLMProvider | null> {
 export async function storeFromEnv(): Promise<Store | null> {
   const { supabaseStoreFromEnv } = await import("@andromeda/core/supabase-store");
   return supabaseStoreFromEnv(process.env);
+}
+
+/**
+ * Build a GitHub pull-request delivery from the environment, or null to
+ * deliver to the local output directory. Requires `ANDROMEDA_DELIVERY_REPO`
+ * (`owner/repo`) and `GITHUB_TOKEN`; the PR stays behind the same approval
+ * gate as every other delivery.
+ */
+export async function deliveryFromEnv(): Promise<DeliveryTarget | null> {
+  const { githubDeliveryFromEnv } = await import("@andromeda/autobuilder");
+  return githubDeliveryFromEnv(process.env);
 }

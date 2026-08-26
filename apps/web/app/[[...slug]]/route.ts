@@ -1,4 +1,10 @@
-import { createConsoleApp, providerFromEnv, storeFromEnv, type ConsoleApp } from "@andromeda/console/app";
+import {
+  createConsoleApp,
+  deliveryFromEnv,
+  providerFromEnv,
+  storeFromEnv,
+  type ConsoleApp,
+} from "@andromeda/console/app";
 import { createRouter } from "@andromeda/console/api";
 import type { Router } from "@andromeda/core";
 
@@ -28,7 +34,11 @@ async function getRouter(): Promise<Router> {
 }
 
 async function build(): Promise<Router> {
-  const [llm, store] = await Promise.all([providerFromEnv(), storeFromEnv()]);
+  const [llm, store, delivery] = await Promise.all([
+    providerFromEnv(),
+    storeFromEnv(),
+    deliveryFromEnv(),
+  ]);
   const app: ConsoleApp = await createConsoleApp({
     // Vercel's serverless filesystem is read-only outside /tmp; write there
     // rather than defaulting to a relative path under the deployment bundle.
@@ -36,6 +46,7 @@ async function build(): Promise<Router> {
     budgetUsd: Number(process.env.ANDROMEDA_BUDGET_USD ?? 5),
     ...(llm ? { llm } : {}),
     ...(store ? { store } : {}),
+    ...(delivery ? { delivery } : {}),
   });
   return createRouter(app);
 }
