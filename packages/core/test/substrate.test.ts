@@ -7,7 +7,7 @@ import { AuditLog } from "../src/audit.ts";
 import { ApprovalGate } from "../src/approval.ts";
 import { CostMeter, MeteredProvider } from "../src/metering.ts";
 import { WorkflowRunner, type StepContext } from "../src/workflow.ts";
-import { BudgetExceededError } from "../src/errors.ts";
+import { BudgetExceededError, GlobalBudgetExceededError } from "../src/errors.ts";
 import { MockLLMProvider } from "../src/llm/mock.ts";
 import { Router, basicAuthGuard, json } from "../src/http/router.ts";
 import { costUsd } from "../src/llm/pricing.ts";
@@ -227,6 +227,107 @@ test("the router matches params, methods, and turns throws into 500s", async () 
     405,
   );
   assert.equal((await router.handle(new Request("http://x/api/boom"))).status, 500);
+});
+
+test("the global budget refuses new runs, caps in-flight ones, and rolls with its window", async () => {
+  const { store, ids } = harness();
+  let t = 1_700_000_000_000;
+  const clock = { now: () => t };
+  const runner = new WorkflowRunner({
+    store,
+    clock,
+    ids,
+    budgetUsd: 5,
+    globalBudget: { limitUsd: 6 },
+  });
+
+  const spender = (usd: number) => ({
+    name: "spender",
+    async run(ctx: StepContext) {
+      await ctx.step("spend", async () => {
+        ctx.meter.record({ purpose: "gen", model: "m", costUsd: usd, inputTokens: 1, outputTokens: 1 });
+        return null;
+      });
+      return "done";
+    },
+  });
+
+  // $4 of a $6 window: fine, and well under the $5 per-run ceiling.
+  assert.equal((await runner.start(spender(4), null)).status, "completed");
+
+  // The window still has $2 of headroom, so the run may start — but its meter
+  // is capped to that headroom, so spending $4 fails as over-budget.
+  const capped = await runner.start(spender(4), null);
+  assert.equal(capped.status, "failed");
+  assert.equal(capped.error?.name, "BudgetExceededError");
+
+  // The window is now exhausted: starting anything is refused outright.
+  await assert.rejects(runner.start(spender(0.01), null), GlobalBudgetExceededError);
+
+  // Spend ages out of the rolling window; new work is admitted again.
+  t += 24 * 60 * 60 * 1000 + 1;
+  assert.equal((await runner.start(spender(1), null)).status, "completed");
+});
+
+test("an exhausted global window never blocks delivering an approved run, only new spend", async () => {
+  const { store, ids } = harness();
+  const t = 1_700_000_000_000;
+  const clock = { now: () => t };
+  const runner = new WorkflowRunner({
+    store,
+    clock,
+    ids,
+    budgetUsd: 5,
+    globalBudget: { limitUsd: 3 },
+  });
+
+  const gated = (spendAfterResume: number) => ({
+    name: "gated",
+    async run(ctx: StepContext) {
+      const decision = await ctx.step("approval", async () => {
+        ctx.suspend("waiting", null);
+      });
+      if (spendAfterResume > 0) {
+        await ctx.step("late-spend", async () => {
+          ctx.meter.record({
+            purpose: "gen",
+            model: "m",
+            costUsd: spendAfterResume,
+            inputTokens: 1,
+            outputTokens: 1,
+          });
+          return null;
+        });
+      }
+      return decision;
+    },
+  });
+
+  const spender = {
+    name: "spender",
+    async run(ctx: StepContext) {
+      await ctx.step("spend", async () => {
+        ctx.meter.record({ purpose: "gen", model: "m", costUsd: 3, inputTokens: 1, outputTokens: 1 });
+        return null;
+      });
+      return "done";
+    },
+  };
+
+  // Two suspended runs start while there is headroom; then a third exhausts it.
+  const deliverable = await runner.start(gated(0), null);
+  const wantsMore = await runner.start(gated(0.5), null);
+  assert.equal((await runner.start(spender, null)).status, "completed");
+  await assert.rejects(runner.start(spender, null), GlobalBudgetExceededError);
+
+  // Resuming to complete without new spend — the approval path — still works.
+  const delivered = await runner.resume(gated(0), deliverable.id, { approved: true });
+  assert.equal(delivered.status, "completed");
+
+  // Resuming a run that then tries to spend hits the capped meter instead.
+  const refused = await runner.resume(gated(0.5), wantsMore.id, { approved: true });
+  assert.equal(refused.status, "failed");
+  assert.equal(refused.error?.name, "BudgetExceededError");
 });
 
 test("a router guard runs before any route and can refuse the request", async () => {

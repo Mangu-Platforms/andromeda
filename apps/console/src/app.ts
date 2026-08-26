@@ -38,6 +38,11 @@ export interface ConsoleOptions {
   delivery?: DeliveryTarget;
   /** Per-run spend ceiling in USD. */
   budgetUsd?: number;
+  /**
+   * Ceiling on spend across all runs in a rolling 24h window. Unset = no
+   * org-level bound; each run is still bounded by `budgetUsd`.
+   */
+  globalBudgetUsd?: number;
   llm?: LLMProvider;
 }
 
@@ -74,6 +79,7 @@ export async function createConsoleApp(options: ConsoleOptions = {}): Promise<Co
       clock: systemClock,
       ids: randomIds,
       budgetUsd: options.budgetUsd ?? 5,
+      ...(options.globalBudgetUsd ? { globalBudget: { limitUsd: options.globalBudgetUsd } } : {}),
     }),
   };
 }

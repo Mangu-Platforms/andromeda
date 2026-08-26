@@ -66,6 +66,9 @@ export async function main(): Promise<void> {
     stateDir: process.env.ANDROMEDA_STATE_DIR ?? "./.andromeda/state",
     outputDir: process.env.ANDROMEDA_OUT_DIR ?? "./.andromeda/out",
     budgetUsd: Number(process.env.ANDROMEDA_BUDGET_USD ?? 5),
+    ...(process.env.ANDROMEDA_GLOBAL_BUDGET_USD
+      ? { globalBudgetUsd: Number(process.env.ANDROMEDA_GLOBAL_BUDGET_USD) }
+      : {}),
     ...(llm ? { llm } : {}),
     ...(store ? { store } : {}),
     ...(delivery ? { delivery } : {}),

@@ -2,7 +2,7 @@ import type { Clock, Ids } from "./clock.ts";
 import type { Store } from "./store.ts";
 import { AuditLog } from "./audit.ts";
 import { CostMeter } from "./metering.ts";
-import { SuspendSignal } from "./errors.ts";
+import { GlobalBudgetExceededError, SuspendSignal } from "./errors.ts";
 
 export type RunStatus = "running" | "suspended" | "completed" | "failed";
 
@@ -57,7 +57,26 @@ export interface RunnerOptions {
   ids: Ids;
   /** Per-run spend ceiling in USD. */
   budgetUsd?: number;
+  /**
+   * Ceiling on spend summed across *all* runs whose window it falls in — the
+   * org-level bound the per-run ceiling cannot provide: without it, anyone who
+   * can start runs can start an unbounded number of maximally priced ones.
+   *
+   * Enforced two ways. `start` refuses outright once the windowed total
+   * reaches the limit. A run that already exists keeps working — resuming to
+   * deliver an approved build spends nothing and must not be blocked by an
+   * exhausted budget — but its meter is capped to the global headroom, so any
+   * *new* completion fails rather than adding spend. In-flight overshoot is
+   * therefore bounded by the per-run ceilings of runs already started.
+   */
+  globalBudget?: {
+    limitUsd: number;
+    /** How far back spend counts against the limit. Defaults to 24 hours. */
+    windowMs?: number;
+  };
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 class Context implements StepContext {
   readonly runId: string;
@@ -135,15 +154,51 @@ export class WorkflowRunner {
   readonly #clock: Clock;
   readonly #ids: Ids;
   readonly #budgetUsd: number;
+  readonly #globalBudget: { limitUsd: number; windowMs: number } | null;
 
   constructor(options: RunnerOptions) {
     this.#store = options.store;
     this.#clock = options.clock;
     this.#ids = options.ids;
     this.#budgetUsd = options.budgetUsd ?? 5;
+    this.#globalBudget = options.globalBudget
+      ? {
+          limitUsd: options.globalBudget.limitUsd,
+          windowMs: options.globalBudget.windowMs ?? DAY_MS,
+        }
+      : null;
+    if (this.#globalBudget && !(this.#globalBudget.limitUsd > 0)) {
+      throw new Error("global budget limit must be positive");
+    }
+  }
+
+  /**
+   * Spend across every run created inside the window, derived from the stored
+   * records each time rather than kept as a counter — a counter can drift or
+   * race; the records are the audit-grade truth this repo already trusts.
+   */
+  async #globalSpentUsd(windowMs: number, excludeRunId?: string): Promise<number> {
+    const cutoff = this.#clock.now() - windowMs;
+    const runs = await this.#store.list<RunRecord>("runs");
+    let total = 0;
+    for (const { value } of runs) {
+      if (value.id === excludeRunId) continue;
+      if (value.createdAt >= cutoff) total += value.spentUsd;
+    }
+    return total;
   }
 
   async start<I, O>(workflow: WorkflowDefinition<I, O>, input: I): Promise<RunRecord> {
+    if (this.#globalBudget) {
+      const spent = await this.#globalSpentUsd(this.#globalBudget.windowMs);
+      if (spent >= this.#globalBudget.limitUsd) {
+        throw new GlobalBudgetExceededError(
+          spent,
+          this.#globalBudget.limitUsd,
+          this.#globalBudget.windowMs,
+        );
+      }
+    }
     const now = this.#clock.now();
     const record: RunRecord = {
       id: this.#ids.next("run"),
@@ -215,7 +270,18 @@ export class WorkflowRunner {
   ): Promise<RunRecord> {
     // Seeded with prior spend so the ceiling is per run, not per attempt —
     // otherwise every resume would hand the run a fresh budget.
-    const meter = new CostMeter(this.#budgetUsd, record.spentUsd);
+    let limitUsd = this.#budgetUsd;
+    if (this.#globalBudget) {
+      // Cap to the global headroom, so an existing run keeps replaying and
+      // delivering when the window is exhausted but cannot add new spend.
+      const elsewhere = await this.#globalSpentUsd(this.#globalBudget.windowMs, record.id);
+      const headroom = Math.max(0, this.#globalBudget.limitUsd - elsewhere - record.spentUsd);
+      limitUsd = Math.min(limitUsd, record.spentUsd + headroom);
+    }
+    // CostMeter refuses a non-positive limit; the epsilon covers the one edge
+    // where a run that never spent resumes into an exhausted window — it may
+    // replay and deliver, and its first new completion throws.
+    const meter = new CostMeter(Math.max(limitUsd, 1e-6), record.spentUsd);
     const ctx = new Context(record.id, audit, meter, record.checkpoints);
     let next: RunRecord;
 
