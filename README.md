@@ -7,7 +7,7 @@ anything is written anywhere.
 
 ```bash
 npm ci
-npm run check                                        # typecheck + 74 tests
+npm run check                                        # typecheck + the full test suite
 npm run autobuild -- build "A tool to shorten URLs" --by you@example.com
 npm run console                                      # review UI on :4200
 ```
@@ -113,18 +113,21 @@ never a paragraph explaining the record.
 
 ## Running it for real
 
-Three things are deliberately swappable, and two of them must be swapped before
+Three things are deliberately swappable, and the first must be swapped before
 this handles anyone else's work:
 
 - **`Sandbox`** — `LocalSandbox` confines paths, strips the environment, runs
   without a shell, caps output and kills by process group. That is enough to run
   a test suite the pipeline just wrote; it is **not** a security boundary
   against hostile code. Bind it to a disposable container for multi-tenant use.
-- **`Store`** — `MemoryStore` and `FileStore` ship; the three-method interface
-  maps directly onto Supabase tables with row-level security.
-- **`DeliveryTarget`** — `LocalDirectoryDelivery` writes to disk. A GitHub
-  implementation opening a pull request goes through the same seam, and stays
-  behind the same approval gate.
+- **`Store`** — `MemoryStore`, `FileStore` and a PostgREST-backed
+  `SupabaseStore` ship; set `SUPABASE_URL` and a key after applying
+  `supabase/migrations/0001_andromeda_store.sql` and run state becomes durable.
+- **`DeliveryTarget`** — `LocalDirectoryDelivery` writes to disk, and
+  `GitHubPullRequestDelivery` opens a draft pull request in a repository you
+  own (`ANDROMEDA_DELIVERY_REPO=owner/repo` + `GITHUB_TOKEN`). Both sit behind
+  the same approval gate; nothing is pushed anywhere before a named human
+  approves.
 
 ## Development
 

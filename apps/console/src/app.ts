@@ -13,6 +13,7 @@ import {
   LocalSandbox,
   TemplateRegistry,
   createAutoBuilder,
+  type DeliveryTarget,
 } from "@andromeda/autobuilder";
 import { demoProvider } from "./demo.ts";
 
@@ -31,10 +32,17 @@ export interface ConsoleOptions {
   stateDir?: string;
   /** A store to use directly — takes priority over `stateDir`. See `storeFromEnv`. */
   store?: Store;
-  /** Where approved builds are written. */
+  /** Where approved builds are written. Ignored if `delivery` is set. */
   outputDir?: string;
+  /** Where approved builds go — takes priority over `outputDir`. See `deliveryFromEnv`. */
+  delivery?: DeliveryTarget;
   /** Per-run spend ceiling in USD. */
   budgetUsd?: number;
+  /**
+   * Ceiling on spend across all runs in a rolling 24h window. Unset = no
+   * org-level bound; each run is still bounded by `budgetUsd`.
+   */
+  globalBudgetUsd?: number;
   llm?: LLMProvider;
 }
 
@@ -46,6 +54,15 @@ export interface ConsoleOptions {
  * repair — runnable with no API key and no cloud account.
  */
 export async function createConsoleApp(options: ConsoleOptions = {}): Promise<ConsoleApp> {
+  if (
+    options.globalBudgetUsd !== undefined &&
+    !(Number.isFinite(options.globalBudgetUsd) && options.globalBudgetUsd > 0)
+  ) {
+    // A typo'd ANDROMEDA_GLOBAL_BUDGET_USD must not silently mean "no cap".
+    throw new Error(
+      `globalBudgetUsd must be a positive number, got ${String(options.globalBudgetUsd)}`,
+    );
+  }
   const demoMode = !options.llm;
   const llm = options.llm ?? demoProvider();
   const store: Store = options.store ?? (options.stateDir ? new FileStore(options.stateDir) : new MemoryStore());
@@ -56,7 +73,7 @@ export async function createConsoleApp(options: ConsoleOptions = {}): Promise<Co
     llm,
     registry,
     gate,
-    delivery: new LocalDirectoryDelivery(options.outputDir ?? "./.andromeda/out"),
+    delivery: options.delivery ?? new LocalDirectoryDelivery(options.outputDir ?? "./.andromeda/out"),
     createSandbox: () => LocalSandbox.create(),
   });
 
@@ -71,6 +88,7 @@ export async function createConsoleApp(options: ConsoleOptions = {}): Promise<Co
       clock: systemClock,
       ids: randomIds,
       budgetUsd: options.budgetUsd ?? 5,
+      ...(options.globalBudgetUsd ? { globalBudget: { limitUsd: options.globalBudgetUsd } } : {}),
     }),
   };
 }
@@ -96,4 +114,15 @@ export async function providerFromEnv(): Promise<LLMProvider | null> {
 export async function storeFromEnv(): Promise<Store | null> {
   const { supabaseStoreFromEnv } = await import("@andromeda/core/supabase-store");
   return supabaseStoreFromEnv(process.env);
+}
+
+/**
+ * Build a GitHub pull-request delivery from the environment, or null to
+ * deliver to the local output directory. Requires `ANDROMEDA_DELIVERY_REPO`
+ * (`owner/repo`) and `GITHUB_TOKEN`; the PR stays behind the same approval
+ * gate as every other delivery.
+ */
+export async function deliveryFromEnv(): Promise<DeliveryTarget | null> {
+  const { githubDeliveryFromEnv } = await import("@andromeda/autobuilder");
+  return githubDeliveryFromEnv(process.env);
 }

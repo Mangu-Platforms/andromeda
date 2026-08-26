@@ -80,7 +80,24 @@ const statusTag = (record: RunRecord): string => {
   return `<span class="tag">${escapeHtml(record.status)}</span>`;
 };
 
-export function dashboard(runs: RunRecord[], demoMode: boolean): string {
+export function dashboard(
+  runs: RunRecord[],
+  demoMode: boolean,
+  decisions: Map<string, ApprovalRequest> = new Map(),
+): string {
+  const decisionCell = (run: RunRecord): string => {
+    const approval = decisions.get(run.id);
+    if (!approval) return `<span class="muted">—</span>`;
+    if (approval.status === "pending") return `<span class="warn">pending</span>`;
+    return `${escapeHtml(approval.status)}${
+      approval.decidedBy ? ` by ${escapeHtml(approval.decidedBy)}` : ""
+    }`;
+  };
+  const requester = (run: RunRecord): string => {
+    const input = run.input as { requestedBy?: unknown } | null;
+    return typeof input?.requestedBy === "string" ? input.requestedBy : "—";
+  };
+
   const rows =
     runs
       .map((run) => {
@@ -88,13 +105,15 @@ export function dashboard(runs: RunRecord[], demoMode: boolean): string {
         return `<tr>
         <td><a href="/runs/${escapeHtml(run.id)}"><code>${escapeHtml(run.id)}</code></a></td>
         <td>${escapeHtml(name)}</td>
+        <td class="small">${escapeHtml(requester(run))}</td>
         <td>${statusTag(run)}</td>
+        <td class="small">${decisionCell(run)}</td>
         <td class="small muted">${money(run.spentUsd)}</td>
         <td class="small muted">${escapeHtml(new Date(run.createdAt).toISOString())}</td>
       </tr>`;
       })
       .join("") ||
-    `<tr><td colspan="5" class="muted">No builds yet.</td></tr>`;
+    `<tr><td colspan="7" class="muted">No builds yet.</td></tr>`;
 
   const banner = demoMode
     ? `<div class="panel"><strong>Demo mode.</strong> No Anthropic credentials found, so builds
@@ -119,7 +138,7 @@ export function dashboard(runs: RunRecord[], demoMode: boolean): string {
     </div>
 
     <table>
-      <thead><tr><th>Run</th><th>Project</th><th>Status</th><th>Spend</th><th>Started</th></tr></thead>
+      <thead><tr><th>Run</th><th>Project</th><th>Requested by</th><th>Status</th><th>Decision</th><th>Spend</th><th>Started</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`,
   );
@@ -216,6 +235,8 @@ export function reviewPage(
       <p class="small muted">Advisory only. A low score still requires your approval.</p>
     </div>
 
+    ${spendSection(events)}
+
     ${decision}
 
     <h2>Test-gated features</h2>
@@ -232,6 +253,47 @@ export function reviewPage(
 
     <p><a href="/">Back to builds</a></p>`,
   );
+}
+
+/**
+ * Where the money went, from the `llm.call` audit events the pipeline records
+ * for every completion — the per-purpose, per-model account an operator needs
+ * before billing anyone, without any schema beyond the audit log.
+ */
+function spendSection(events: AuditEvent[]): string {
+  const calls = events.filter((event) => event.kind === "llm.call");
+  if (calls.length === 0) return "";
+
+  const byPurpose = new Map<string, { calls: number; usd: number }>();
+  for (const event of calls) {
+    const purpose = typeof event.data.purpose === "string" ? event.data.purpose : "(unknown)";
+    const model = typeof event.data.model === "string" ? event.data.model : "(unknown)";
+    const usd = typeof event.data.costUsd === "number" ? event.data.costUsd : 0;
+    const key = `${purpose} · ${model}`;
+    const row = byPurpose.get(key) ?? { calls: 0, usd: 0 };
+    row.calls += 1;
+    row.usd += usd;
+    byPurpose.set(key, row);
+  }
+
+  const rows = [...byPurpose.entries()]
+    .sort((a, b) => b[1].usd - a[1].usd)
+    .map(
+      ([key, row]) => `<tr>
+        <td class="small"><code>${escapeHtml(key)}</code></td>
+        <td class="small muted">${row.calls}</td>
+        <td class="small">${money(row.usd)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<div class="panel">
+    <h2 style="margin-top:0">Spend by purpose</h2>
+    <table>
+      <thead><tr><th>Purpose · model</th><th>Calls</th><th>Cost</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
 }
 
 function auditSection(events: AuditEvent[]): string {

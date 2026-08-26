@@ -1,4 +1,10 @@
-import { createConsoleApp, providerFromEnv, storeFromEnv, type ConsoleApp } from "@andromeda/console/app";
+import {
+  createConsoleApp,
+  deliveryFromEnv,
+  providerFromEnv,
+  storeFromEnv,
+  type ConsoleApp,
+} from "@andromeda/console/app";
 import { createRouter } from "@andromeda/console/api";
 import type { Router } from "@andromeda/core";
 
@@ -28,16 +34,30 @@ async function getRouter(): Promise<Router> {
 }
 
 async function build(): Promise<Router> {
-  const [llm, store] = await Promise.all([providerFromEnv(), storeFromEnv()]);
+  const [llm, store, delivery] = await Promise.all([
+    providerFromEnv(),
+    storeFromEnv(),
+    deliveryFromEnv(),
+  ]);
   const app: ConsoleApp = await createConsoleApp({
     // Vercel's serverless filesystem is read-only outside /tmp; write there
     // rather than defaulting to a relative path under the deployment bundle.
     outputDir: process.env.ANDROMEDA_OUT_DIR ?? "/tmp/andromeda/out",
     budgetUsd: Number(process.env.ANDROMEDA_BUDGET_USD ?? 5),
+    // Meaningful only with the Supabase store: on the in-memory fallback the
+    // spend history this ceiling sums resets per warm serverless instance.
+    ...(process.env.ANDROMEDA_GLOBAL_BUDGET_USD !== undefined
+      ? { globalBudgetUsd: Number(process.env.ANDROMEDA_GLOBAL_BUDGET_USD) }
+      : {}),
     ...(llm ? { llm } : {}),
     ...(store ? { store } : {}),
+    ...(delivery ? { delivery } : {}),
   });
-  return createRouter(app);
+  // Anyone who can reach this deployment can otherwise start builds and
+  // approve deliveries; set ANDROMEDA_CONSOLE_PASSWORD (or keep Vercel's
+  // own deployment protection on) before sharing a URL.
+  const password = process.env.ANDROMEDA_CONSOLE_PASSWORD;
+  return createRouter(app, password ? { password } : {});
 }
 
 async function handle(request: Request): Promise<Response> {

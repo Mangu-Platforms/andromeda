@@ -1,6 +1,6 @@
 import type { ProjectSpec } from "../spec/types.ts";
 import type { GeneratedFile, TemplateDefinition } from "./types.ts";
-import { envExample, stableJson } from "./render.ts";
+import { envExample, featureContract, stableJson } from "./render.ts";
 import { migrationSql } from "./sql.ts";
 
 const DEPENDENCIES = {};
@@ -19,7 +19,12 @@ const DEV_DEPENDENCIES = {
  */
 export const workerApi: TemplateDefinition = {
   id: "worker-api",
-  version: "1.0.0",
+  // 1.0.1: features/contract.ts renders from the shared canonical source
+  // (doc-comment change only); the generated tsconfig drops
+  // rewriteRelativeImportExtensions, which made the scaffold's own
+  // `npm run typecheck` fail with TS2877 on every #features import; router
+  // import bindings are de-duplicated.
+  version: "1.0.1",
   description:
     "Cloudflare Workers HTTP API with Supabase Postgres. No UI; edge-deployed endpoints only.",
   dependencies: DEPENDENCIES,
@@ -67,8 +72,9 @@ const tsconfig = (): string =>
       lib: ["ES2023"],
       module: "NodeNext",
       moduleResolution: "nodenext",
+      // No rewriteRelativeImportExtensions: nothing is emitted, and with it
+      // enabled tsc rejects `#features/*.ts` imports with TS2877.
       allowImportingTsExtensions: true,
-      rewriteRelativeImportExtensions: true,
       verbatimModuleSyntax: true,
       erasableSyntaxOnly: true,
       noEmit: true,
@@ -141,31 +147,14 @@ npx wrangler dev
 `;
 }
 
-const featureContract = (): string =>
-  `/** Shared with every Andromeda template: a feature is a pure request handler. */
-export interface FeatureInput {
-  method: string;
-  path: string;
-  query: Record<string, string>;
-  body: unknown;
-  userId: string | null;
-}
-
-export interface FeatureResult {
-  status: number;
-  body: unknown;
-}
-
-export type FeatureHandler = (input: FeatureInput) => Promise<FeatureResult>;
-`;
-
 function router(spec: ProjectSpec): string {
   const routed = spec.routes.filter((r) => r.feature);
-  const imports = [...new Set(routed.map((r) => r.feature))]
-    .map((f) => `import { handle as ${camel(f)} } from "#features/${f}.ts";`)
+  const bindings = bindingNames([...new Set(routed.map((r) => r.feature))]);
+  const imports = [...bindings]
+    .map(([f, name]) => `import { handle as ${name} } from "#features/${f}.ts";`)
     .join("\n");
   const table = routed
-    .map((r) => `  { method: ${JSON.stringify(r.method)}, path: ${JSON.stringify(r.path)}, handler: ${camel(r.feature)} },`)
+    .map((r) => `  { method: ${JSON.stringify(r.method)}, path: ${JSON.stringify(r.path)}, handler: ${bindings.get(r.feature)} },`)
     .join("\n");
 
   return `import type { FeatureHandler } from "#features/contract.ts";
@@ -234,3 +223,20 @@ const camel = (name: string): string => {
     .join("");
   return `${pascal.slice(0, 1).toLowerCase()}${pascal.slice(1)}`;
 };
+
+/**
+ * Unique import binding per feature id. Distinct slugs can camel-case to the
+ * same identifier ("a-b" and "a--b"), which would render a router that
+ * declares one binding twice and fails to parse.
+ */
+function bindingNames(features: string[]): Map<string, string> {
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const feature of features) {
+    let name = camel(feature);
+    for (let n = 2; taken.has(name); n++) name = `${camel(feature)}${n}`;
+    taken.add(name);
+    names.set(feature, name);
+  }
+  return names;
+}
