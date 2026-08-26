@@ -9,7 +9,7 @@ import { CostMeter, MeteredProvider } from "../src/metering.ts";
 import { WorkflowRunner, type StepContext } from "../src/workflow.ts";
 import { BudgetExceededError } from "../src/errors.ts";
 import { MockLLMProvider } from "../src/llm/mock.ts";
-import { Router, json } from "../src/http/router.ts";
+import { Router, basicAuthGuard, json } from "../src/http/router.ts";
 import { costUsd } from "../src/llm/pricing.ts";
 
 const harness = () => ({
@@ -227,6 +227,39 @@ test("the router matches params, methods, and turns throws into 500s", async () 
     405,
   );
   assert.equal((await router.handle(new Request("http://x/api/boom"))).status, 500);
+});
+
+test("a router guard runs before any route and can refuse the request", async () => {
+  const guarded = new Router({ guard: basicAuthGuard("s3cret") }).get("/", () => json({ ok: true }));
+
+  const anonymous = await guarded.handle(new Request("http://x/"));
+  assert.equal(anonymous.status, 401);
+  assert.match(anonymous.headers.get("www-authenticate") ?? "", /^Basic realm=/);
+
+  const credential = (user: string, password: string) =>
+    new Request("http://x/", {
+      headers: { authorization: `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}` },
+    });
+
+  assert.equal((await guarded.handle(credential("anyone", "s3cret"))).status, 200);
+  // Any username passes; only the password decides.
+  assert.equal((await guarded.handle(credential("", "s3cret"))).status, 200);
+  assert.equal((await guarded.handle(credential("anyone", "wrong"))).status, 401);
+  assert.equal((await guarded.handle(credential("anyone", ""))).status, 401);
+  // A password that is a prefix of the real one must not pass.
+  assert.equal((await guarded.handle(credential("anyone", "s3cre"))).status, 401);
+  assert.equal((await guarded.handle(credential("anyone", "s3cretx"))).status, 401);
+
+  const garbled = await guarded.handle(
+    new Request("http://x/", { headers: { authorization: "Basic %%%not-base64%%%" } }),
+  );
+  assert.equal(garbled.status, 401);
+
+  assert.throws(() => basicAuthGuard(""), /non-empty password/);
+
+  // No guard configured: the router is unchanged.
+  const open = new Router().get("/", () => json({ ok: true }));
+  assert.equal((await open.handle(new Request("http://x/"))).status, 200);
 });
 
 test("the mock provider scripts a retry sequence per purpose", async () => {

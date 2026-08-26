@@ -48,7 +48,11 @@ async function build(): Promise<Router> {
     ...(store ? { store } : {}),
     ...(delivery ? { delivery } : {}),
   });
-  return createRouter(app);
+  // Anyone who can reach this deployment can otherwise start builds and
+  // approve deliveries; set ANDROMEDA_CONSOLE_PASSWORD (or keep Vercel's
+  // own deployment protection on) before sharing a URL.
+  const password = process.env.ANDROMEDA_CONSOLE_PASSWORD;
+  return createRouter(app, password ? { password } : {});
 }
 
 async function handle(request: Request): Promise<Response> {

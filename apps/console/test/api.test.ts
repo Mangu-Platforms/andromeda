@@ -50,6 +50,26 @@ test("html responses carry a restrictive content security policy", async () => {
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 });
 
+test("a configured password gates every route; without one the console is open", async () => {
+  const { app } = await consoleUnderTest();
+  const guarded = createRouter(app, { password: "hunter2" });
+
+  for (const request of [
+    new Request("http://console/"),
+    new Request("http://console/api/runs"),
+    form("/runs", { intent: "x", requestedBy: "y" }),
+  ]) {
+    const denied = await guarded.handle(request);
+    assert.equal(denied.status, 401);
+    assert.match(denied.headers.get("www-authenticate") ?? "", /Basic/);
+  }
+
+  const authed = new Request("http://console/", {
+    headers: { authorization: `Basic ${Buffer.from("op:hunter2").toString("base64")}` },
+  });
+  assert.equal((await guarded.handle(authed)).status, 200);
+});
+
 test("a build runs, stops for review, and can be approved through the UI", async () => {
   const { app, router } = await consoleUnderTest();
 

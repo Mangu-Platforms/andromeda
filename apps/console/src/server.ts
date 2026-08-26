@@ -71,13 +71,21 @@ export async function main(): Promise<void> {
     ...(delivery ? { delivery } : {}),
   });
 
-  createServer(nodeAdapter(createRouter(app))).listen(port, () => {
+  const password = process.env.ANDROMEDA_CONSOLE_PASSWORD;
+  const router = createRouter(app, password ? { password } : {});
+
+  createServer(nodeAdapter(router)).listen(port, () => {
     console.log(`Andromeda console on http://localhost:${port}`);
     console.log(
       app.demoMode
         ? "Demo mode: replaying fixtures. Set ANTHROPIC_API_KEY to run against a live model."
         : "Live mode: builds will call the Claude API and spend real money.",
     );
+    if (!password) {
+      console.log(
+        "No ANDROMEDA_CONSOLE_PASSWORD set: the console is unauthenticated — keep it on localhost.",
+      );
+    }
   });
 }
 

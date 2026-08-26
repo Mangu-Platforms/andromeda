@@ -1,4 +1,4 @@
-import { AuditLog, Router, html, json, systemClock } from "@andromeda/core";
+import { AuditLog, Router, basicAuthGuard, html, json, systemClock } from "@andromeda/core";
 import type { ApprovalRequest, RunRecord } from "@andromeda/core";
 import type { ConsoleApp } from "./app.ts";
 import { dashboard, errorPage, reviewPage } from "./views.ts";
@@ -11,9 +11,20 @@ import { dashboard, errorPage, reviewPage } from "./views.ts";
  * fetch handler. Moving this to Vercel or to Workers means re-exporting these
  * functions from route files, not rewriting them; `server.ts` is only a local
  * `node:http` adapter over the same router.
+ *
+ * With a `password` set, every route — pages, form posts and JSON API alike —
+ * demands HTTP Basic auth before it runs. Without one the console is open,
+ * which is only acceptable bound to localhost.
  */
-export function createRouter(app: ConsoleApp): Router {
-  const router = new Router();
+export interface RouterOptions {
+  /** Require HTTP Basic auth with this password on every route. */
+  password?: string;
+}
+
+export function createRouter(app: ConsoleApp, options: RouterOptions = {}): Router {
+  const router = new Router(
+    options.password ? { guard: basicAuthGuard(options.password) } : {},
+  );
 
   router.get("/", async () => html(dashboard(await app.runner.list(), app.demoMode)));
 

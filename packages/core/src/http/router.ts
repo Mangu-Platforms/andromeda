@@ -19,8 +19,22 @@ interface Route {
   handler: RouteHandler;
 }
 
+export interface RouterOptions {
+  /**
+   * Runs before any route. Returning a `Response` short-circuits the request
+   * — the seam an authentication check plugs into (see `basicAuthGuard`) —
+   * and returning `null` lets routing proceed.
+   */
+  guard?: (req: Request) => Response | null;
+}
+
 export class Router {
   readonly #routes: Route[] = [];
+  readonly #guard: RouterOptions["guard"];
+
+  constructor(options: RouterOptions = {}) {
+    this.#guard = options.guard;
+  }
 
   #add(method: Method, path: string, handler: RouteHandler): this {
     this.#routes.push({ method, segments: split(path), handler });
@@ -36,6 +50,8 @@ export class Router {
   }
 
   async handle(req: Request): Promise<Response> {
+    const denied = this.#guard?.(req);
+    if (denied) return denied;
     const segments = split(new URL(req.url).pathname);
     let pathMatched = false;
 
@@ -69,6 +85,57 @@ function match(pattern: string[], actual: string[]): Record<string, string> | nu
     else if (p !== a) return null;
   }
   return params;
+}
+
+/**
+ * HTTP Basic auth as a router guard.
+ *
+ * Basic rather than a bearer token because the console is plain HTML forms:
+ * a browser can supply Basic credentials natively on every request — form
+ * posts included — with no script, which keeps the CSP's `script-src 'none'`
+ * intact. The username is ignored; only the password is compared, in
+ * constant time over bytes so a mismatch reveals nothing about where it
+ * mismatched. Web-standard only (`atob`, `TextEncoder`), so it runs
+ * unchanged under node:http, Vercel and Workers.
+ *
+ * This protects a single-operator console. It is not accounts: everyone who
+ * has the password is the same principal, and approval attribution still
+ * comes from the name typed into the decision form.
+ */
+export function basicAuthGuard(password: string, realm = "andromeda"): RouterOptions["guard"] {
+  if (!password) throw new Error("basicAuthGuard requires a non-empty password");
+  const expected = new TextEncoder().encode(password);
+
+  return (req: Request): Response | null => {
+    const header = req.headers.get("authorization") ?? "";
+    if (header.startsWith("Basic ")) {
+      let decoded = "";
+      try {
+        decoded = atob(header.slice("Basic ".length).trim());
+      } catch {
+        decoded = "";
+      }
+      // Credentials are `user:password`; the password may itself contain ':'.
+      const supplied = new TextEncoder().encode(decoded.slice(decoded.indexOf(":") + 1));
+      if (decoded.includes(":") && timingSafeEqual(supplied, expected)) return null;
+    }
+    return new Response("authentication required\n", {
+      status: 401,
+      headers: {
+        "www-authenticate": `Basic realm="${realm}", charset="UTF-8"`,
+        "content-type": "text/plain; charset=utf-8",
+      },
+    });
+  };
+}
+
+/** Byte comparison whose duration depends only on the supplied length. */
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < a.length; i++) {
+    diff |= (a[i] as number) ^ (b[i % b.length] ?? 0);
+  }
+  return diff === 0;
 }
 
 export function json(body: unknown, status = 200): Response {
