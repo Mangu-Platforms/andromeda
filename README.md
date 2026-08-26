@@ -147,3 +147,5 @@ build step, and the test-gate can execute generated code with nothing installed.
   remaining nine products reuse it.
 - [docs/product-01-auto-builder.md](docs/product-01-auto-builder.md) — how the
   blueprint's blocker, pricing and build sequence map onto what is here.
+- [docs/operations.md](docs/operations.md) — the operator's guide: deployment
+  shapes, the control surface, the approval queue, and choosing a template.
