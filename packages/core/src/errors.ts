@@ -30,6 +30,29 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * Thrown when starting a run would exceed the ceiling on spend across *all*
+ * runs in the configured window — the org-level control, as distinct from
+ * `BudgetExceededError`, which is one run hitting its own ceiling.
+ */
+export class GlobalBudgetExceededError extends Error {
+  readonly spentUsd: number;
+  readonly limitUsd: number;
+  readonly windowMs: number;
+
+  constructor(spentUsd: number, limitUsd: number, windowMs: number) {
+    super(
+      `global budget exceeded: $${spentUsd.toFixed(4)} of $${limitUsd.toFixed(4)} ` +
+        `spent across runs in the last ${(windowMs / 3_600_000).toFixed(0)}h; ` +
+        `refusing to start new work`,
+    );
+    this.name = "GlobalBudgetExceededError";
+    this.spentUsd = spentUsd;
+    this.limitUsd = limitUsd;
+    this.windowMs = windowMs;
+  }
+}
+
 /** Thrown when model output fails to satisfy a schema after every repair attempt. */
 export class SpecValidationError extends Error {
   readonly issues: string[];

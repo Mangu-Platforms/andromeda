@@ -1,4 +1,13 @@
-import { AuditLog, Router, html, json, systemClock } from "@andromeda/core";
+import {
+  AuditLog,
+  Router,
+  basicAuthGuard,
+  composeGuards,
+  html,
+  json,
+  sameOriginPostGuard,
+  systemClock,
+} from "@andromeda/core";
 import type { ApprovalRequest, RunRecord } from "@andromeda/core";
 import type { ConsoleApp } from "./app.ts";
 import { dashboard, errorPage, reviewPage } from "./views.ts";
@@ -11,11 +20,36 @@ import { dashboard, errorPage, reviewPage } from "./views.ts";
  * fetch handler. Moving this to Vercel or to Workers means re-exporting these
  * functions from route files, not rewriting them; `server.ts` is only a local
  * `node:http` adapter over the same router.
+ *
+ * With a `password` set, every route — pages, form posts and JSON API alike —
+ * demands HTTP Basic auth before it runs. Without one the console is open,
+ * which is only acceptable bound to localhost.
  */
-export function createRouter(app: ConsoleApp): Router {
-  const router = new Router();
+export interface RouterOptions {
+  /** Require HTTP Basic auth with this password on every route. */
+  password?: string;
+}
 
-  router.get("/", async () => html(dashboard(await app.runner.list(), app.demoMode)));
+export function createRouter(app: ConsoleApp, options: RouterOptions = {}): Router {
+  // CSRF protection is unconditional: the browser attaches Basic credentials
+  // by itself, so the auth guard alone would not stop a foreign page from
+  // posting an approval with the operator's ambient credentials.
+  const router = new Router({
+    guard: options.password
+      ? composeGuards(basicAuthGuard(options.password), sameOriginPostGuard())
+      : sameOriginPostGuard(),
+  });
+
+  router.get("/", async () => {
+    const [runs, approvals] = await Promise.all([app.runner.list(), app.gate.list()]);
+    // Newest-first ordering means the first approval seen per run is the
+    // latest word on it, which is what the operator column should show.
+    const decisions = new Map<string, (typeof approvals)[number]>();
+    for (const approval of approvals) {
+      if (!decisions.has(approval.runId)) decisions.set(approval.runId, approval);
+    }
+    return html(dashboard(runs, app.demoMode, decisions));
+  });
 
   router.get("/runs/:id", async (_req, params) => {
     const view = await loadRun(app, params.id ?? "");

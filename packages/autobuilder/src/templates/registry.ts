@@ -2,6 +2,7 @@ import type { ProjectSpec } from "../spec/types.ts";
 import type { GeneratedFile, TemplateDefinition } from "./types.ts";
 import { assertPinned, sortFiles } from "./render.ts";
 import { nextSupabaseApp } from "./next-supabase-app.ts";
+import { nodeService } from "./node-service.ts";
 import { workerApi } from "./worker-api.ts";
 
 /** Repo-relative, no traversal, no absolute paths, no dotdot segments. */
@@ -24,7 +25,7 @@ export interface RenderedScaffold {
 export class TemplateRegistry {
   readonly #templates = new Map<string, TemplateDefinition>();
 
-  constructor(templates: TemplateDefinition[] = [nextSupabaseApp, workerApi]) {
+  constructor(templates: TemplateDefinition[] = [nextSupabaseApp, workerApi, nodeService]) {
     for (const template of templates) this.register(template);
   }
 

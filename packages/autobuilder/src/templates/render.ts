@@ -69,6 +69,39 @@ export function sortFiles<T extends { path: string }>(files: T[]): T[] {
   return [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
+/**
+ * The one `features/contract.ts` every template renders, byte for byte.
+ *
+ * Generated feature modules and their frozen tests are portable between
+ * scaffolds only if the boundary they import is identical, so the text lives
+ * here once rather than being re-typed per template and drifting.
+ */
+export const featureContract = (): string =>
+  `/**
+ * The contract between generated business logic and the scaffold.
+ *
+ * Route handlers, auth and persistence are template-provided; a feature module
+ * is a pure function from a request to a response. Keeping the boundary this
+ * narrow is what makes generated code testable without a server, a database or
+ * a network.
+ */
+export interface FeatureInput {
+  method: string;
+  path: string;
+  query: Record<string, string>;
+  body: unknown;
+  /** Authenticated user id, or null for an anonymous request. */
+  userId: string | null;
+}
+
+export interface FeatureResult {
+  status: number;
+  body: unknown;
+}
+
+export type FeatureHandler = (input: FeatureInput) => Promise<FeatureResult>;
+`;
+
 export function envExample(spec: ProjectSpec): string {
   const lines = [
     `# Environment for ${spec.name}.`,

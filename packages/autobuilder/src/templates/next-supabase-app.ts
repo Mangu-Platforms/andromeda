@@ -1,6 +1,6 @@
 import type { ProjectSpec } from "../spec/types.ts";
 import type { GeneratedFile, TemplateDefinition } from "./types.ts";
-import { envExample, routeDirectory, stableJson, tsType } from "./render.ts";
+import { envExample, featureContract, routeDirectory, stableJson, tsType } from "./render.ts";
 import { migrationSql } from "./sql.ts";
 
 /**
@@ -27,7 +27,10 @@ const DEV_DEPENDENCIES = {
 
 export const nextSupabaseApp: TemplateDefinition = {
   id: "next-supabase-app",
-  version: "1.0.0",
+  // 1.0.1: contract renders from the shared canonical source, and the
+  // generated tsconfig drops rewriteRelativeImportExtensions, which made the
+  // scaffold's own `npm run typecheck` fail with TS2877 on #features imports.
+  version: "1.0.1",
   description:
     "Next.js App Router on Vercel with Supabase Postgres, auth and row-level security.",
   dependencies: DEPENDENCIES,
@@ -91,8 +94,9 @@ function tsconfig(): string {
       lib: ["ES2023", "DOM", "DOM.Iterable"],
       module: "NodeNext",
       moduleResolution: "nodenext",
+      // No rewriteRelativeImportExtensions: nothing is emitted, and with it
+      // enabled tsc rejects `#features/*.ts` imports with TS2877.
       allowImportingTsExtensions: true,
-      rewriteRelativeImportExtensions: true,
       verbatimModuleSyntax: true,
       erasableSyntaxOnly: true,
       jsx: "preserve",
@@ -197,32 +201,6 @@ is covered by \`features/<id>.test.ts\`.
 ${routes || "_No routes._"}
 `;
 }
-
-const featureContract = (): string =>
-  `/**
- * The contract between generated business logic and the scaffold.
- *
- * Route handlers, auth and persistence are template-provided; a feature module
- * is a pure function from a request to a response. Keeping the boundary this
- * narrow is what makes generated code testable without a server, a database or
- * a network.
- */
-export interface FeatureInput {
-  method: string;
-  path: string;
-  query: Record<string, string>;
-  body: unknown;
-  /** Authenticated user id, or null for an anonymous request. */
-  userId: string | null;
-}
-
-export interface FeatureResult {
-  status: number;
-  body: unknown;
-}
-
-export type FeatureHandler = (input: FeatureInput) => Promise<FeatureResult>;
-`;
 
 function entityTypes(spec: ProjectSpec): string {
   const blocks = spec.entities.map((entity) => {

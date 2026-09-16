@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { Router } from "@andromeda/core";
-import { createConsoleApp, providerFromEnv, storeFromEnv } from "./app.ts";
+import { createConsoleApp, deliveryFromEnv, providerFromEnv, storeFromEnv } from "./app.ts";
 import { createRouter } from "./api.ts";
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -57,22 +57,38 @@ async function toWebRequest(req: IncomingMessage): Promise<Request> {
 
 export async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 4200);
-  const [llm, store] = await Promise.all([providerFromEnv(), storeFromEnv()]);
+  const [llm, store, delivery] = await Promise.all([
+    providerFromEnv(),
+    storeFromEnv(),
+    deliveryFromEnv(),
+  ]);
   const app = await createConsoleApp({
     stateDir: process.env.ANDROMEDA_STATE_DIR ?? "./.andromeda/state",
     outputDir: process.env.ANDROMEDA_OUT_DIR ?? "./.andromeda/out",
     budgetUsd: Number(process.env.ANDROMEDA_BUDGET_USD ?? 5),
+    ...(process.env.ANDROMEDA_GLOBAL_BUDGET_USD !== undefined
+      ? { globalBudgetUsd: Number(process.env.ANDROMEDA_GLOBAL_BUDGET_USD) }
+      : {}),
     ...(llm ? { llm } : {}),
     ...(store ? { store } : {}),
+    ...(delivery ? { delivery } : {}),
   });
 
-  createServer(nodeAdapter(createRouter(app))).listen(port, () => {
+  const password = process.env.ANDROMEDA_CONSOLE_PASSWORD;
+  const router = createRouter(app, password ? { password } : {});
+
+  createServer(nodeAdapter(router)).listen(port, () => {
     console.log(`Andromeda console on http://localhost:${port}`);
     console.log(
       app.demoMode
         ? "Demo mode: replaying fixtures. Set ANTHROPIC_API_KEY to run against a live model."
         : "Live mode: builds will call the Claude API and spend real money.",
     );
+    if (!password) {
+      console.log(
+        "No ANDROMEDA_CONSOLE_PASSWORD set: the console is unauthenticated — keep it on localhost.",
+      );
+    }
   });
 }
 

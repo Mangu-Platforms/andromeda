@@ -35,10 +35,10 @@ rubber-stamp.
 
 | Step | Status |
 |---|---|
-| 1. Template registry + spec compiler | Done. Two version-pinned templates, strict validator, propose/validate/repair loop. |
+| 1. Template registry + spec compiler | Done. Three version-pinned templates (Vercel app, Workers API, self-hosted Node service), strict validator, propose/validate/repair loop. |
 | 2. Wire one deploy target end-to-end | Partial. `next-supabase-app` renders a complete Vercel + Supabase project — config, migrations with RLS, CI, route handlers — and `DeliveryTarget` writes it out. Pushing to Vercel/Supabase APIs is not wired. |
 | 3. Feature layer behind a test-gate | Done, and executing for real: generated code runs under `node --test` in a sandbox. |
-| 4. PR-review UI | Done as a review console: spec, risk breakdown, every file, per-feature test output, audit trail, approve/reject. Delivery targets a directory; opening an actual pull request is the same seam, unimplemented. |
+| 4. PR-review UI | Done as a review console: spec, risk breakdown, every file, per-feature test output, audit trail, approve/reject. Delivery targets a directory, or opens a draft pull request in the customer's repository via `GitHubPullRequestDelivery`. |
 | 5. Billing | Not built. Metering is — every completion is priced, attributed per purpose and per model, and bounded by a per-run ceiling — which is the half that has to be right before billing can be built on it. |
 
 Deviations from the blueprint worth flagging:
@@ -81,17 +81,14 @@ Ordered by how quickly it would bite:
 1. **The sandbox is not a security boundary.** Fine for a single-tenant build
    machine; not fine the moment someone else's prompt runs on it. Container
    first.
-2. **No pull request.** "Human-approved MVP in a day" is the wedge, and the
-   review is currently a console page rather than a PR in the customer's own
-   repository. The `DeliveryTarget` seam exists; the GitHub implementation does
-   not.
-3. **Two templates.** The library is the moat the blueprint describes, and two
-   templates is a demonstration of the registry, not a library.
-4. **Features are pure request handlers.** The contract that makes generated
+2. **Three templates.** The library is the moat the blueprint describes; three
+   deployment shapes (Vercel, Workers, self-hosted Node) cover the registry's
+   breadth, but a moat is domain templates, not runtime targets.
+3. **Features are pure request handlers.** The contract that makes generated
    code testable without a database also means a feature cannot yet query one.
    Widening it — a repository interface the template provides and the sandbox
    fakes — is the next real piece of product work.
-5. **Acceptance criteria carry the whole gate.** Tests are only as good as the
+4. **Acceptance criteria carry the whole gate.** Tests are only as good as the
    criteria the spec compiler wrote. The compiler is prompted hard for concrete,
    checkable statements and the validator rejects features with none, but
    nothing checks that a criterion is *meaningful*. A criterion that asserts
@@ -106,6 +103,7 @@ prototype-generator skips: pinned dependencies, migrations with row-level
 security on by default, CI that installs from a lockfile, generated code that
 arrives with tests it had to pass, and an audit trail of what the agent did.
 
-The parts that would decide it commercially — the PR flow into a customer's own
-repository, a template library worth paying for, and features that can talk to
-the database — are the three items above.
+The PR flow into a customer's own repository now exists
+(`GitHubPullRequestDelivery`, behind the same approval gate). The parts that
+would decide it commercially from here — a template library worth paying for,
+and features that can talk to the database — are the first items above.

@@ -1,0 +1,19 @@
+# Andromeda — Questions for Stakeholders
+
+Unknowns the repository cannot answer, ordered by how much they change the plan.
+
+1. **Swarm-City boundary.** Swarm-City is not mentioned anywhere in this repo, yet `packages/codebase-guardian` is exactly "watch a repo, propose risk-scored, test-gated patch PRs" — Swarm-City's claimed territory. Which layer owns "patch existing repos"? Should codebase-guardian be folded into Swarm-City, stay as Andromeda's library that Swarm-City consumes, or be retired?
+2. **Priority across the ten products.** All ten exist as containment libraries; only #1 (Auto-Builder) is a runnable product. Is the mandate "productize #1 to revenue first" (the docs' implied answer, and this audit's recommendation), or is any other product (#8 API Translator and #2 Guardian are the architecturally cheapest next two per `docs/architecture.md`) wanted this quarter?
+3. **Delivery seam.** What should approved builds become for the first customers — a draft PR in the customer's GitHub repo (docs call this the #1 commercial gap), a downloadable zip, or a Vercel/Supabase provisioning push? This decides the next two weeks of work.
+4. **Console auth.** The console currently has none. Is Supabase Auth the chosen scheme (aligning with the store), or is Mangu SSO / Vercel platform protection acceptable for v1? Who are the named approvers, and does "named human" need to be a verified identity rather than a typed string?
+5. **Production store.** Confirm Supabase as the production `Store` (the code prefers the service-role key, which bypasses RLS — acceptable server-side, but someone must own the key). Which Supabase project/org does Andromeda live in?
+6. **Budget policy.** `ANDROMEDA_BUDGET_USD` defaults to $5 **per run**, and there is no global/daily ceiling — any visitor to an unauthenticated console can start unlimited runs. What per-run and per-org ceilings do we want, and should exhaustion notify anyone?
+7. **Anthropic account terms.** Which Anthropic account/key tier will production use, and are its commercial-use and rate-limit terms compatible with reselling generated output ($29/run packs, API cost + 30% overage per the blueprint)?
+8. **Pricing decision.** Blueprint tiers ($25 Pro / $99 seat / cost+30%) vs "included in Mangu Studio" vs $29/run packs — which is the actual go-to-market? Billing itself is unbuilt (metering is); entitlements need a home in `Store`.
+9. **Template roadmap.** `next-supabase-app` and `worker-api` are the only two templates, and the docs call the template library "the moat". What are the next 3 templates Mangu actually needs (letters-style inbox? publishing storefront? comic-pipeline tool?), and who curates/pins them?
+10. **Multi-tenancy timeline.** `LocalSandbox` is explicitly not a security boundary. Is single-tenant (Mangu-internal operators only) acceptable for the next 90 days, or does external use arrive sooner — in which case the container-backed `Sandbox` needs scheduling now?
+11. **Feature expressiveness.** Generated features are pure request handlers — they cannot query a database yet, which the docs name as "the next real piece of product work". Is a template-provided repository interface in scope this quarter?
+12. **SLAs.** No latency targets exist in the repo. Are the proposed ones (spec ≤60s, review-ready ≤10min) right for the intended users?
+13. **Concurrency limits.** Nothing bounds simultaneous runs or sandbox processes on one host. What concurrency should the hosted console allow per operator/org?
+14. **Ops ownership.** Who owns the Vercel project, the Supabase project, key rotation, and the approval queue day-to-day once deployed?
+15. **Default branch.** Confirm repointing the GitHub default branch from `claude/10-ai-agent-products-p42qb1` (a merged feature branch) back to `main` — needed before external contributors or CI badges make sense.

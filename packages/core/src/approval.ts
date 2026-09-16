@@ -115,6 +115,12 @@ export class ApprovalGate {
     return decided;
   }
 
+  /** Every request, newest first — the operator's account of what was decided by whom. */
+  async list(): Promise<ApprovalRequest[]> {
+    const all = await this.#store.list<ApprovalRequest>("approvals");
+    return all.map(({ value }) => value).sort((a, b) => b.requestedAt - a.requestedAt);
+  }
+
   async listPending(): Promise<ApprovalRequest[]> {
     const all = await this.#store.list<ApprovalRequest>("approvals");
     return all.map(({ value }) => value).filter((r) => r.status === "pending");

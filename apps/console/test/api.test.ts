@@ -41,7 +41,73 @@ test("html responses carry a restrictive content security policy", async () => {
   const response = await router.handle(new Request("http://console/"));
   const csp = response.headers.get("content-security-policy") ?? "";
   assert.match(csp, /default-src 'none'/);
+  // Scripts must be refused outright — 'unsafe-inline' would let a
+  // prompt-injected <script> execute if escaping ever regressed.
+  assert.match(csp, /script-src 'none'/);
+  // 'self', not 'none': the console's own approve/reject forms post back to
+  // it, and browsers enforce form-action even though router tests cannot.
+  assert.match(csp, /form-action 'self'/);
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+});
+
+test("a configured password gates every route; without one the console is open", async () => {
+  const { app } = await consoleUnderTest();
+  const guarded = createRouter(app, { password: "hunter2" });
+
+  for (const request of [
+    new Request("http://console/"),
+    new Request("http://console/api/runs"),
+    form("/runs", { intent: "x", requestedBy: "y" }),
+  ]) {
+    const denied = await guarded.handle(request);
+    assert.equal(denied.status, 401);
+    assert.match(denied.headers.get("www-authenticate") ?? "", /Basic/);
+  }
+
+  const authed = new Request("http://console/", {
+    headers: { authorization: `Basic ${Buffer.from("op:hunter2").toString("base64")}` },
+  });
+  assert.equal((await guarded.handle(authed)).status, 200);
+});
+
+test("cross-origin form posts are refused even with valid credentials", async () => {
+  const { app } = await consoleUnderTest();
+  const guarded = createRouter(app, { password: "hunter2" });
+  const auth = `Basic ${Buffer.from("op:hunter2").toString("base64")}`;
+
+  // The browser attaches Basic credentials automatically, so a foreign page
+  // could otherwise submit the decision form with the operator's ambient auth.
+  const forged = new Request("http://console/runs", {
+    method: "POST",
+    headers: {
+      authorization: auth,
+      origin: "http://evil.example",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ intent: "x", requestedBy: "y" }).toString(),
+  });
+  assert.equal((await guarded.handle(forged)).status, 403);
+
+  // Same-origin posts and header-less API clients still work.
+  const own = new Request("http://console/runs", {
+    method: "POST",
+    headers: {
+      authorization: auth,
+      origin: "http://console",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ intent: "a tool", requestedBy: "op" }).toString(),
+  });
+  assert.notEqual((await guarded.handle(own)).status, 403);
+});
+
+test("a nonsensical global budget fails app construction instead of silently uncapping", async () => {
+  for (const globalBudgetUsd of [Number.NaN, 0, -5]) {
+    await assert.rejects(
+      createConsoleApp({ llm: demoProvider(), globalBudgetUsd }),
+      /globalBudgetUsd must be a positive number/,
+    );
+  }
 });
 
 test("a build runs, stops for review, and can be approved through the UI", async () => {
@@ -193,12 +259,41 @@ test("the templates endpoint reports what can actually be built", async () => {
   const { router } = await consoleUnderTest();
   const body = (await (await router.handle(new Request("http://console/api/templates"))).json()) as
     Array<{ id: string; dependencies: Record<string, string> }>;
-  assert.deepEqual(body.map((t) => t.id).sort(), ["next-supabase-app", "worker-api"]);
+  assert.deepEqual(body.map((t) => t.id).sort(), ["next-supabase-app", "node-service", "worker-api"]);
   for (const template of body) {
     for (const version of Object.values(template.dependencies)) {
       assert.match(version, /^\d+\.\d+\.\d+/);
     }
   }
+});
+
+test("the dashboard accounts for who asked and who decided", async () => {
+  const { router } = await consoleUnderTest();
+  const started = await router.handle(
+    asJson("/runs", { intent: "a link shortener", requestedBy: "priya@mangu.dev" }),
+  );
+  const { id } = (await started.json()) as { id: string };
+  await router.handle(
+    asJson(`/runs/${id}/decision`, { status: "approved", decidedBy: "renee@mangu.dev", note: "" }),
+  );
+
+  const page = await (await router.handle(new Request("http://console/"))).text();
+  assert.match(page, /Requested by/);
+  assert.match(page, /priya@mangu\.dev/);
+  assert.match(page, /approved by renee@mangu\.dev/);
+});
+
+test("the run page accounts for spend by purpose and model", async () => {
+  const { router } = await consoleUnderTest();
+  const started = await router.handle(
+    asJson("/runs", { intent: "a link shortener", requestedBy: "priya@mangu.dev" }),
+  );
+  const { id } = (await started.json()) as { id: string };
+
+  const page = await (await router.handle(new Request(`http://console/runs/${id}`))).text();
+  assert.match(page, /Spend by purpose/);
+  // The demo fixtures meter real llm.call events for the compiler and features.
+  assert.match(page, /compile-spec|spec\.compile|feature/i);
 });
 
 test("the audit trail is exposed for the run", async () => {
